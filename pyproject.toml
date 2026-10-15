@@ -55,6 +55,7 @@ peters_dome = { path = ".", editable = true }
 stage-all = "bash scripts/stage_all.sh"
 build-tree = "python scripts/build_datatree.py"
 build-cube = "python scripts/build_datacube.py"
+report = "python scripts/make_report.py"
 test = "pytest -q"
 test-online = "pytest -q -m online"
 lint = "ruff check src scripts tests"

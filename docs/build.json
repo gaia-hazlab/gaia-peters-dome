@@ -1,0 +1,13 @@
+{
+ "map": "ok",
+ "seismic": "ok",
+ "infrasound": "ok",
+ "i53": "ok",
+ "force": "ok",
+ "sar": "ok",
+ "optical": "not staged yet in this build",
+ "shaltop": "ok",
+ "glacier": "not staged yet in this build",
+ "met": "ok",
+ "profile": "ok"
+}
