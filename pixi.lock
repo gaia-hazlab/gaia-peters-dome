@@ -219,7 +219,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/rasterio-1.5.2-py312h80aa65b_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/re2-2025.11.05-h94463f1_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/readline-8.3-hd6e31c0_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/ruff-0.15.22-h462bb3b_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/ruff-0.17.0-hf19af3b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/s2n-1.7.5-h7e3ee7f_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/scikit-learn-1.9.1-np2py312h91ec553_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/scipy-1.18.1-py312h106c528_1.conda
@@ -285,7 +285,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/colorama-0.4.6-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.12.15-py312hd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-4.25.3-pyh5ded981_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-5.2.0-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.8.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.8.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/decorator-5.3.1-pyhd8ed1ab_0.conda
@@ -409,8 +409,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zict-3.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.1-pyh5ded981_0.conda
       - pypi: ./
-      - pypi: git+https://github.com/gaia-hazlab/gaia-cli.git?rev=d5ee76c#d5ee76c3b16d002cb86a6950c1f374c35e22717b
-      - pypi: https://files.pythonhosted.org/packages/cc/f4/f3f61c203bc980dd9bba0ba7ed3c6e81ddfd36b286330f9487c2c7d041aa/ty-0.0.26-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: git+https://github.com/gaia-hazlab/gaia-cli.git?rev=896b628#896b628ef4d6489bb1df2bd43f40b7aa3daa1a5d
+      - pypi: https://files.pythonhosted.org/packages/3a/62/dc4d7135c5ea1bf6f5429509113e1c8092ff4e55399f527c508edaba20bb/ty-0.0.87-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/affine-3.0.1-pyhecae5ae_0.conda
@@ -437,7 +437,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/colorama-0.4.6-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.12.15-py312hd8ed1ab_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-4.25.3-pyh5ded981_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-5.2.0-pyh5ded981_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.8.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.8.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/decorator-5.3.1-pyhd8ed1ab_0.conda
@@ -728,7 +728,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/rasterio-1.5.2-py312h1ba9b4d_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/re2-2025.11.05-h5d60da5_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
-      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ruff-0.15.22-h828de30_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ruff-0.17.0-hc2d82ec_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/s2n-1.7.5-h1b28cb6_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/scikit-learn-1.9.1-np2py312hda66c2e_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/scipy-1.18.1-py312h84b0c4e_1.conda
@@ -749,8 +749,9 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-h31dac16_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
       - pypi: ./
-      - pypi: git+https://github.com/gaia-hazlab/gaia-cli.git?rev=d5ee76c#d5ee76c3b16d002cb86a6950c1f374c35e22717b
-      - pypi: https://files.pythonhosted.org/packages/71/25/37081461e13d38a190e5646948d7bc42084f7bd1c6b44f12550be3923e7e/ty-0.0.26-py3-none-macosx_11_0_arm64.whl
+      - pypi: git+https://github.com/gaia-hazlab/gaia-cli.git?rev=896b628#896b628ef4d6489bb1df2bd43f40b7aa3daa1a5d
+      - pypi: https://files.pythonhosted.org/packages/8e/71/7a9029a81c8206ee01a98f6cfeeb56e6c095af86857581a37045c46d7e94/ruff-0.17.1-py3-none-macosx_11_0_arm64.whl
+      - pypi: https://files.pythonhosted.org/packages/f1/03/7cc79acc2a01b3e7146ae8c3df2445c7fe4930e54c3d8b9c052bfa27f389/ty-0.0.87-py3-none-macosx_11_0_arm64.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -4345,23 +4346,21 @@ packages:
     - readline >=8.3,<9.0a0
   size: 348899
   timestamp: 1787033801506
-- conda: https://conda.anaconda.org/conda-forge/linux-64/ruff-0.15.22-h462bb3b_0.conda
-  noarch: python
-  sha256: 2002c7869a95ed94b03303a033fcc24b608597bdd01c8f01d90c47175616edb9
-  md5: ad7d8b2d37a1098a04ddd8b34b962481
+- conda: https://conda.anaconda.org/conda-forge/linux-64/ruff-0.17.0-hf19af3b_0.conda
+  sha256: a79ec28ded75f038db0d79459caf335ad90c1ad4e206ace01d60b08a66c882fa
+  md5: 09bc0855b5d157b2d603a1dc4d0721b1
   depends:
-  - python
   - __glibc >=2.17,<3.0.a0
-  - libgcc >=14
+  - libgcc >=15
   constrains:
   - __glibc >=2.17
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/ruff?source=hash-mapping
+  - pkg:pypi/ruff?source=compressed-mapping
   run_exports: {}
-  size: 9333318
-  timestamp: 1784237314764
+  size: 8926625
+  timestamp: 1791586553873
 - conda: https://conda.anaconda.org/conda-forge/linux-64/s2n-1.7.5-h7e3ee7f_1.conda
   sha256: 7369ac21f3561e2203f5b1600ef0671270057380783ca4b9e15f679ba25db575
   md5: fa1c00d999e83ec20173c9775f71a1f1
@@ -5337,23 +5336,23 @@ packages:
   run_exports: {}
   size: 14778
   timestamp: 1764466758386
-- conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-4.25.3-pyh5ded981_0.conda
-  sha256: 5275a4e8c53dd9e3784a2a3fe1ad85abf0495dfc2d9f1708f61a4c3e3dcb9f04
-  md5: 0ed5a13795c68f99b646f0aba22405ed
+- conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-5.2.0-pyh5ded981_0.conda
+  sha256: 3346377bed02b06e282eaf8e1810a92829244063577f77cffe8b5dd974e3d0c4
+  md5: fae753a13c1df14b3aeaf2f8e5b5b314
   depends:
   - python >=3.11
   - attrs >=23.1.0
   - rich >=13.6.0
   - docstring_parser >=0.15,<4.0
-  - rich-rst >=1.3.1,<3.0.0
+  - rich-rst >=2.0.1,<3
   - python
   license: Apache-2.0
   license_family: APACHE
   purls:
   - pkg:pypi/cyclopts?source=compressed-mapping
   run_exports: {}
-  size: 194175
-  timestamp: 1790180038386
+  size: 231123
+  timestamp: 1791332988811
 - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.8.0-pyhc364b38_0.conda
   sha256: 757750c674117059fde8114f305591f1b4ee8f446b11274278151e88fdcf61c6
   md5: e79afa78ebd31bb1e76de5fe117edb29
@@ -10074,22 +10073,19 @@ packages:
     - readline >=8.3,<9.0a0
   size: 314395
   timestamp: 1787033878899
-- conda: https://conda.anaconda.org/conda-forge/osx-arm64/ruff-0.15.22-h828de30_0.conda
-  noarch: python
-  sha256: 56362f7c5150de1f01450fcb668dbd9c3f163e9f0f69f1f7c9da5bebd0d75172
-  md5: 81fe5e5807d471fcd624bfb6bdb98968
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/ruff-0.17.0-hc2d82ec_0.conda
+  sha256: ea20182979a4e1cc7eb529174a7020926b1deb2ef61f10901b92acf31270d8bf
+  md5: f09ba1f46c4e8e711d9c15452664b046
   depends:
-  - python
   - __osx >=11.0
   constrains:
   - __osx >=11.0
   license: MIT
   license_family: MIT
-  purls:
-  - pkg:pypi/ruff?source=hash-mapping
+  purls: []
   run_exports: {}
-  size: 8651168
-  timestamp: 1784237480462
+  size: 8198789
+  timestamp: 1791586611651
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/s2n-1.7.5-h1b28cb6_1.conda
   sha256: 47ec36bdd05117c974853a8dbaa9d89605a5f70b592d47c7d198b20252ddf1f4
   md5: 94b3b302cd6c07c5ec68648b25c8c525
@@ -10384,30 +10380,35 @@ packages:
 - pypi: ./
   name: peters-dome
   requires_python: '>=3.11'
-- pypi: git+https://github.com/gaia-hazlab/gaia-cli.git?rev=d5ee76c#d5ee76c3b16d002cb86a6950c1f374c35e22717b
+- pypi: git+https://github.com/gaia-hazlab/gaia-cli.git?rev=896b628#896b628ef4d6489bb1df2bd43f40b7aa3daa1a5d
   name: gaia-cli
   version: 0.1.0
   requires_dist:
-  - cyclopts>=4.10.1,<5
-  - geopandas>=1.1.3,<2
+  - cyclopts>=5.2.0,<6
+  - geopandas>=1.2.0,<2
   - requests
   - xarray
   - xvec>=0.5.2,<0.6
   - zarr
-  - pytest>=9.0.2,<10
-  - ty>=0.0.26,<0.0.27
-  - ruff>=0.15.8,<0.16
+  - pytest>=9.1.1,<10
+  - ty>=0.0.87,<0.0.88
+  - ruff>=0.17.0,<0.18
   - pytest ; extra == 'dev'
   - ty ; extra == 'dev'
   - ruff ; extra == 'dev'
   requires_python: '>=3.11'
-- pypi: https://files.pythonhosted.org/packages/71/25/37081461e13d38a190e5646948d7bc42084f7bd1c6b44f12550be3923e7e/ty-0.0.26-py3-none-macosx_11_0_arm64.whl
+- pypi: https://files.pythonhosted.org/packages/3a/62/dc4d7135c5ea1bf6f5429509113e1c8092ff4e55399f527c508edaba20bb/ty-0.0.87-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: ty
-  version: 0.0.26
-  sha256: a01b7de5693379646d423b68f119719a1338a20017ba48a93eefaff1ee56f97b
+  version: 0.0.87
+  sha256: e8caa3316ea81e794fcd98d1e4d3aaa5fae84790154d88c3e85ac3bd01c537bd
   requires_python: '>=3.8'
-- pypi: https://files.pythonhosted.org/packages/cc/f4/f3f61c203bc980dd9bba0ba7ed3c6e81ddfd36b286330f9487c2c7d041aa/ty-0.0.26-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+- pypi: https://files.pythonhosted.org/packages/8e/71/7a9029a81c8206ee01a98f6cfeeb56e6c095af86857581a37045c46d7e94/ruff-0.17.1-py3-none-macosx_11_0_arm64.whl
+  name: ruff
+  version: 0.17.1
+  sha256: 29b454f18ca3eeaf37fbf140841dcf27d36109e29dee9aae8acecb68c26c6f74
+  requires_python: '>=3.7'
+- pypi: https://files.pythonhosted.org/packages/f1/03/7cc79acc2a01b3e7146ae8c3df2445c7fe4930e54c3d8b9c052bfa27f389/ty-0.0.87-py3-none-macosx_11_0_arm64.whl
   name: ty
-  version: 0.0.26
-  sha256: 8a2c766a94d79b4f82995d41229702caf2d76e5c440ec7e543d05c70e98bf8ab
+  version: 0.0.87
+  sha256: d38ebf4da3fb234676236b38e03d24014aa3522af8533c6f0f5eccd4a9de147e
   requires_python: '>=3.8'

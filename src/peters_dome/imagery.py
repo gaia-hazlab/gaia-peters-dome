@@ -1,13 +1,19 @@
 """SAR, optical and DEM rasters from public STAC APIs.
 
-High-resolution rasters (<= 30 m) are staged in UTM 5N (EPSG:32605) rather than the
-gaia-cli default EPSG:4326: at 63 N a degree of longitude is ~2.2x shorter than a degree
-of latitude, and the USGS release DEM is already UTM 5N. ``build_datacube.py`` puts
-everything on one grid.
+Following gaia-cli, rasters stay on their native grid: odc-stac loads in the items'
+native CRS and resolution (the most common CRS when items differ, e.g. Landsat rows in
+UTM 5N and 6N), and only the AOI is reprojected for clipping. Putting products on one
+grid is a separate step (``gaia align`` or ``peters-dome cube``).
+
+Exception: ArcticDEM strips and mosaic are read at ``--resolution`` (default 10 m) in
+their native polar stereographic CRS through COG overviews, because 2 m over the AOI
+is ~45 M cells per strip.
 """
 
 from __future__ import annotations
 
+import logging
+from collections import Counter
 from typing import Annotated
 
 import geopandas as gpd
@@ -19,6 +25,9 @@ import xarray as xr
 from cyclopts import Parameter
 
 from . import common
+from .params import STORE, End, Group, Input, Output, Overwrite, SkipExisting, Start
+
+log = logging.getLogger(__name__)
 
 odc.stac.configure_rio(cloud_defaults=True)
 
@@ -38,23 +47,32 @@ def _search(api, collections, aoi, start, end, query=None, sign=False):
         query=query,
     )
     items = list(search.items())
-    print(f"  {collections}: {len(items)} items {start}..{end}")
+    log.info("%s: %d items %s..%s", collections, len(items), start, end)
     return items
 
 
-def _load(items, bands, aoi, resolution, crs=None, groupby="solar_day", **kw):
-    crs = crs or common.utm_crs()
+def _native_crs(items) -> str:
+    codes = Counter(
+        str(it.properties.get("proj:code") or f"EPSG:{it.properties.get('proj:epsg')}") for it in items
+    )
+    return codes.most_common(1)[0][0]
+
+
+def _load(items, bands, aoi, resolution=None, groupby="solar_day", **kw):
+    """Native CRS of the items; native resolution unless ``resolution`` is given."""
+    crs = _native_crs(items)
+    extra = {"resolution": resolution} if resolution else {}
     ds = odc.stac.load(
         items,
         bands=bands,
         crs=crs,
-        resolution=resolution,
         bbox=tuple(aoi.to_crs("EPSG:4326").total_bounds),
         groupby=groupby,
         chunks={},
+        **extra,
         **kw,
     )
-    return common.clip_projected(ds, aoi)
+    return common.clip(ds, aoi)
 
 
 # ---- SAR ---------------------------------------------------------------------------------
@@ -118,10 +136,14 @@ def load_landsat(aoi, start_date, end_date, max_cloud=80, resolution=30.0) -> xr
 
 # ---- DEMs --------------------------------------------------------------------------------
 
-def load_copdem(aoi, resolution=30.0) -> xr.DataArray:
+def load_copdem(aoi) -> xr.DataArray:
+    """Copernicus GLO-30 on its native 1 arc-second EPSG:4326 grid."""
     items = _search(PC_STAC, ["cop-dem-glo-30"], aoi, "2010-01-01", "2030-01-01", sign=True)
-    da = _load(items, ["data"], aoi, resolution, groupby=None)["data"].max("time")
-    da = da.where(da > -100).rename("elevation")
+    da = _load(items, ["data"], aoi, groupby=None)["data"].max("time")
+    if "longitude" in da.dims:  # odc names geographic dims latitude/longitude; gaia uses x/y
+        da = da.rename({"longitude": "x", "latitude": "y"})
+    crs = da.rio.crs
+    da = da.where(da > -100).rename("elevation").rio.write_crs(crs)
     da.attrs = common.provenance(units="m", vertical_datum="EGM2008", source="Copernicus GLO-30")
     return da
 
@@ -149,51 +171,47 @@ def load_arcticdem_mosaic(aoi, resolution=10.0) -> xr.DataArray:
 
 # ---- CLI ---------------------------------------------------------------------------------
 
-_I = Annotated[str, Parameter(name=["--input", "-i"])]
-_S = Annotated[str, Parameter(name=["--start", "-s"])]
-_E = Annotated[str, Parameter(name=["--end", "-e"])]
-_O = Annotated[str, Parameter(name=["--output", "-o"])]
+def stage_sar(vectorPath: Input = "aoi/AOI.geojson", start_date: Start = "2023-08-01",
+              end_date: End = "2023-10-31", output_path: Output = STORE,
+              group: Group = "rasters/sar/sentinel1_rtc",
+              overwrite: Overwrite = False, skip_existing: SkipExisting = False):
+    """Stage Sentinel-1 RTC gamma0 (VV, VH), native 10 m UTM grid."""
+    if common.check_group(output_path, group, overwrite, skip_existing):
+        ds = load_sar(common.load_aoi(vectorPath), start_date, end_date)
+        common.write_group(ds, output_path, group, overwrite)
 
 
-def stage_sar(vectorPath: _I = "aoi/AOI.geojson", start_date: _S = "2023-08-01",
-              end_date: _E = "2023-10-31", output_path: _O = "data/staged/sar_s1_rtc.zarr",
-              resolution: Annotated[float, Parameter(name=["--resolution"])] = 10.0):
-    """Stage Sentinel-1 RTC gamma0 (VV, VH) clipped to the AOI."""
-    common.check_s3_env(output_path)
-    common.save_zarr(load_sar(common.load_aoi(vectorPath), start_date, end_date, resolution), output_path)
-
-
-def stage_optical(vectorPath: _I = "aoi/AOI.geojson", start_date: _S = "2023-08-01",
-                  end_date: _E = "2023-10-31", output_path: _O = "data/staged/optical_s2.zarr",
+def stage_optical(vectorPath: Input = "aoi/AOI.geojson", start_date: Start = "2023-08-01",
+                  end_date: End = "2023-10-31", output_path: Output = STORE,
                   sensor: Annotated[str, Parameter(name=["--sensor"])] = "sentinel2",
-                  max_cloud: Annotated[float, Parameter(name=["--max-cloud"])] = 80):
-    """Stage optical surface reflectance (sentinel2 | landsat) clipped to the AOI."""
-    common.check_s3_env(output_path)
-    aoi = common.load_aoi(vectorPath)
-    fn = {"sentinel2": load_sentinel2, "landsat": load_landsat}[sensor]
-    common.save_zarr(fn(aoi, start_date, end_date, max_cloud), output_path)
+                  group: Group = "",
+                  max_cloud: Annotated[float, Parameter(name=["--max-cloud"])] = 80,
+                  overwrite: Overwrite = False, skip_existing: SkipExisting = False):
+    """Stage optical surface reflectance (sentinel2 | landsat), native grid."""
+    group = group or f"rasters/optical/{sensor}"
+    if common.check_group(output_path, group, overwrite, skip_existing):
+        fn = {"sentinel2": load_sentinel2, "landsat": load_landsat}[sensor]
+        common.write_group(fn(common.load_aoi(vectorPath), start_date, end_date, max_cloud),
+                           output_path, group, overwrite)
 
 
-def stage_dem(vectorPath: _I = "aoi/AOI.geojson", start_date: _S = "2008-01-01",
-              end_date: _E = "2025-12-31", output_path: _O = "data/staged/dem.zarr",
+def stage_dem(vectorPath: Input = "aoi/AOI.geojson", start_date: Start = "2008-01-01",
+              end_date: End = "2025-12-31", output_path: Output = STORE,
               product: Annotated[str, Parameter(name=["--product"])] = "arcticdem-strips",
-              resolution: Annotated[float, Parameter(name=["--resolution"])] = 10.0):
+              group: Group = "",
+              resolution: Annotated[float, Parameter(name=["--resolution"])] = 10.0,
+              overwrite: Overwrite = False, skip_existing: SkipExisting = False):
     """Stage a DEM: arcticdem-strips (multitemporal) | arcticdem-mosaic | copdem."""
-    common.check_s3_env(output_path)
+    group = group or f"rasters/topography/{product.replace('-', '_')}"
+    if not common.check_group(output_path, group, overwrite, skip_existing):
+        return
     aoi = common.load_aoi(vectorPath)
     if product == "arcticdem-strips":
         da = load_arcticdem_strips(aoi, start_date, end_date, resolution)
     elif product == "arcticdem-mosaic":
         da = load_arcticdem_mosaic(aoi, resolution)
     elif product == "copdem":
-        da = load_copdem(aoi, max(resolution, 30.0))
+        da = load_copdem(aoi)
     else:
         raise ValueError(product)
-    common.save_zarr(da, output_path)
-
-
-def nearest_pair(da: xr.DataArray | xr.Dataset, t_event: np.datetime64):
-    """Last scene before and first scene after the event."""
-    before = da.sel(time=da.time < t_event).isel(time=-1)
-    after = da.sel(time=da.time > t_event).isel(time=0)
-    return before, after
+    common.write_group(da, output_path, group, overwrite)

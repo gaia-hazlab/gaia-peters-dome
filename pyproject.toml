@@ -6,7 +6,7 @@ requires-python = ">= 3.11"
 dependencies = []
 
 [project.scripts]
-peters-dome = "peters_dome.cli:app"
+peters-dome = "peters_dome.cli:main"
 
 [build-system]
 build-backend = "hatchling.build"
@@ -18,7 +18,7 @@ platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.dependencies]
 python = "3.12.*"
-cyclopts = ">=4.10,<5"
+cyclopts = ">=5.2,<6"
 geopandas = ">=1.1,<2"
 pyogrio = "*"
 xarray = ">=2025.6"
@@ -42,20 +42,20 @@ pyyaml = "*"
 requests = "*"
 python-dotenv = "*"
 matplotlib = "*"
-pytest = ">=9.0.2,<10"   # pinned to match gaia-cli runtime deps
-ruff = ">=0.15.8,<0.16"   # pinned to match gaia-cli runtime deps
+pytest = ">=9.1.1,<10"   # pinned to match gaia-cli runtime deps
+ruff = ">=0.17.0,<0.18"   # pinned to match gaia-cli runtime deps
 
 [tool.pixi.pypi-dependencies]
 # gaia-cli supplies the shared I/O (AOI loading, clipping, Zarr/xvec/DataTree writers)
 # and the `gaia stage synoptic` command. Pinned to the commit this repo was written against.
-gaia-cli = { git = "https://github.com/gaia-hazlab/gaia-cli.git", rev = "d5ee76c" }
+gaia-cli = { git = "https://github.com/gaia-hazlab/gaia-cli.git", rev = "896b628" }
 peters_dome = { path = ".", editable = true }
 
 [tool.pixi.tasks]
 stage-all = "bash scripts/stage_all.sh"
-build-tree = "python scripts/build_datatree.py"
 build-cube = "python scripts/build_datacube.py"
 report = "python scripts/make_report.py"
+check = "python scripts/check_store.py"
 test = "pytest -q"
 test-online = "pytest -q -m online"
 lint = "ruff check src scripts tests"
