@@ -69,7 +69,9 @@ def load_itslive(aoi, year: str = "0000", resolution: float = 120.0) -> xr.Datas
         url = f"{ITSLIVE}/{kind}/cog/ITS_LIVE_velocity_120m_RGI01A_{year}_v02_{v}.tif"
         da = rioxarray.open_rasterio(url, chunks={}).squeeze("band", drop=True)
         da = common.clip_projected(da.rio.clip_box(*aoi.to_crs(da.rio.crs).total_bounds), aoi)
-        da = da.where(da != da.rio.nodata)
+        crs = da.rio.crs
+        # where() drops the grid_mapping attr; the COG also carries a 'mapping' coord
+        da = da.where(da != da.rio.nodata).drop_vars("mapping", errors="ignore").rio.write_crs(crs)
         out[v] = da.rio.reproject(common.utm_crs(), resolution=resolution)
     ds = xr.Dataset(out)
     for v in ds:

@@ -11,6 +11,9 @@ dataset has a `load(aoi, start, end) -> xarray` function and a `stage` CLI entry
 vector data, and DataTree assembly reuse `gaia_cli.io` directly. Every module here can be
 moved into `gaia_cli/` as a new `gaia stage <name>` subcommand without changes to its I/O.
 
+**Report:** <https://gaia-hazlab.github.io/gaia-peters-dome/>, figures built from the
+staged stores by `pixi run report` (writes `docs/`, served by GitHub Pages from `main:/docs`).
+
 ## People
 
 | role | GitHub |
@@ -75,6 +78,7 @@ pixi install
 pixi run stage-all       # every dataset -> data/staged/*.zarr (+ GeoJSON for vectors)
 pixi run build-tree      # one DataTree -> data/peters_dome.zarr
 pixi run build-cube      # common UTM 5N 10 m grid -> data/peters_dome_datacube.zarr
+pixi run report          # figures + docs/index.html for GitHub Pages
 pixi run test            # offline tests; `pixi run test-online` hits live services
 ```
 
