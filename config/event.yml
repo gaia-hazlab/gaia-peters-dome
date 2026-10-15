@@ -1,0 +1,43 @@
+# Single source of truth for event metadata and per-modality time windows.
+# Every number below carries its source.
+
+event:
+  name: Peters Dome ice-rock avalanche
+  region: Denali National Park and Preserve, Alaska
+  # USGS ComCat event, type "landslide", M2.6 (queried 2026-10-14, fdsnws/event, 100 km around source)
+  origin_time_utc: "2023-09-14T02:06:49.074Z"
+  latitude: 63.1455
+  longitude: -151.1904
+  # ComCat "other event", M1.4, ~8 min before the main failure; the paper reports two
+  # infrasound precursors minutes before failure (Toney et al., 2026, abstract)
+  precursor_time_utc: "2023-09-14T01:58:54.098Z"
+  # USGS data release 10.5066/P13WIS6X metadata
+  source_area_lat: 63.1423
+  source_area_lon: -151.1871
+  volume_m3: 6.1e6
+  peak_speed_m_s: 60     # paper abstract: "speeds exceeding 60 m/s"
+  release_bbox: [-151.26797, 63.12888, -151.15543, 63.20751]   # minx, miny, maxx, maxy (ScienceBase item)
+  # force-time function zero time (release metadata XML, attribute "time (s)")
+  force_zero_time_utc: "2023-09-14T02:06:27Z"
+  # release outlines (EPSG:32605 areas): source 0.143 km2, source+deposit 1.520 km2
+  utm_crs: "EPSG:32605"  # UTM 5N, same CRS as the release post-event DEM
+
+references:
+  paper_doi: "10.1029/2025JF008577"     # Toney et al. (2026) JGR Earth Surface 131(3), CC-BY 4.0
+  data_release_doi: "10.5066/P13WIS6X"
+  sciencebase_item: "6927572fd4be02716f722db3"
+
+aoi:
+  local: aoi/peters_dome_local.geojson
+  regional: aoi/peters_dome_regional.geojson
+  waveforms: aoi/peters_dome_waveforms.geojson
+
+# Time windows used by scripts/stage_all.sh. Rationale in README.
+windows:
+  seismic:    {start: "2023-09-14T01:50:00", end: "2023-09-14T02:30:00"}   # precursor - 8 min to +23 min
+  infrasound: {start: "2023-09-14T01:50:00", end: "2023-09-14T03:00:00"}   # 400 km at ~0.3 km/s = ~22 min, plus margin
+  sar:        {start: "2023-08-01", end: "2023-10-31"}
+  optical:    {start: "2023-08-01", end: "2023-10-31"}
+  dem:        {start: "2008-01-01", end: "2025-12-31"}                     # ArcticDEM strips, multitemporal
+  met:        {start: "2023-06-01", end: "2023-09-21"}                     # antecedent summer through event + 1 week
+  met_profile: {start: "2023-09-13T00:00", end: "2023-09-14T12:00"}        # atmosphere for infrasound propagation

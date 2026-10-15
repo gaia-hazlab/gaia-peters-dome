@@ -1,0 +1,50 @@
+{
+ "type": "FeatureCollection",
+ "name": "peters_dome_local",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+  }
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "event": "2023 Peters Dome ice-rock avalanche, Denali National Park and Preserve",
+    "paper_doi": "10.1029/2025JF008577",
+    "data_release_doi": "10.5066/P13WIS6X",
+    "aoi": "local",
+    "purpose": "source, runout path, deposit: DEM, SAR, optical, glacier, soil, geology, datacube",
+    "derived_from": "USGS data release bounding box padded by 0.06 deg lon / 0.03 deg lat"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -151.33,
+       63.1
+      ],
+      [
+       -151.09,
+       63.1
+      ],
+      [
+       -151.09,
+       63.24
+      ],
+      [
+       -151.33,
+       63.24
+      ],
+      [
+       -151.33,
+       63.1
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
