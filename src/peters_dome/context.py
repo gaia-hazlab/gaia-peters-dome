@@ -1,12 +1,13 @@
 """Glaciological, geological and soil context layers.
 
-Vectors (outlines, map units, point measurements) are stored as CF-encoded xvec Datasets
-with a ``geometry`` dimension (same encoding gaia-cli uses for stations), and also written
-as GeoJSON next to the Zarr store for GIS use.
+Vectors (outlines, map units, point measurements) are written as CF-encoded xvec groups
+(``vectors/...``) of the container store, the encoding gaia-cli uses for stations.
+Rasters (ITS_LIVE, SoilGrids) stay on their native grids (EPSG:3413 and Homolosine).
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -17,6 +18,9 @@ import xarray as xr
 from cyclopts import Parameter
 
 from . import common
+from .params import STORE, Group, Input, Output, Overwrite, SkipExisting
+
+log = logging.getLogger(__name__)
 
 GLIMS_WFS = "https://www.glims.org/geoserver/GLIMS/wfs"
 ITSLIVE = "https://its-live-data.s3.amazonaws.com/velocity_mosaic/v2"
@@ -39,14 +43,17 @@ SOIL_DEPTHS = ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm", "100-200cm"]
 
 def _wfs(layer: str, aoi: gpd.GeoDataFrame, max_features: int = 5000) -> gpd.GeoDataFrame:
     minx, miny, maxx, maxy = aoi.to_crs("EPSG:4326").total_bounds
-    r = requests.get(GLIMS_WFS, params=dict(
-        service="WFS", version="1.1.0", request="GetFeature", typeName=layer,
-        bbox=f"{minx},{miny},{maxx},{maxy},EPSG:4326", outputFormat="application/json",
-        maxFeatures=max_features), timeout=120)
+    r = requests.get(GLIMS_WFS, params={
+        "service": "WFS", "version": "1.1.0", "request": "GetFeature", "typeName": layer,
+        "bbox": f"{minx},{miny},{maxx},{maxy},EPSG:4326", "outputFormat": "application/json",
+        "maxFeatures": max_features, "srsName": "EPSG:4326"}, timeout=120)
     r.raise_for_status()
     feats = r.json()["features"]
     gdf = gpd.GeoDataFrame.from_features(feats, crs="EPSG:4326") if feats else gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-    print(f"  {layer}: {len(gdf)} features")
+    # some GLIMS layers (RGI_Alaska) come back in EPSG:3857 metres unless srsName is honoured
+    if len(gdf) and (abs(gdf.total_bounds[[0, 2]]).max() > 180 or abs(gdf.total_bounds[[1, 3]]).max() > 90):
+        raise ValueError(f"{layer}: coordinates are not lon/lat (bounds {gdf.total_bounds})")
+    log.info("%s: %d features", layer, len(gdf))
     return gdf
 
 
@@ -60,19 +67,19 @@ def load_glacier_outlines(aoi) -> dict[str, gpd.GeoDataFrame]:
     }
 
 
-def load_itslive(aoi, year: str = "0000", resolution: float = 120.0) -> xr.Dataset:
-    """ITS_LIVE v2 surface velocity mosaic, RGI region 01. ``year='0000'`` is the
-    multi-year composite; annual mosaics exist for 2014-2022 (checked 2026-10-14)."""
+def load_itslive(aoi, year: str = "0000") -> xr.Dataset:
+    """ITS_LIVE v2 surface velocity mosaic, RGI region 01, native 120 m EPSG:3413 grid.
+    ``year='0000'`` is the multi-year composite; annual mosaics exist for 2014-2022
+    (checked 2026-10-14)."""
     kind = "static" if year == "0000" else "annual"
     out = {}
     for v in ("v", "vx", "vy", "v_error"):
         url = f"{ITSLIVE}/{kind}/cog/ITS_LIVE_velocity_120m_RGI01A_{year}_v02_{v}.tif"
-        da = rioxarray.open_rasterio(url, chunks={}).squeeze("band", drop=True)
-        da = common.clip_projected(da.rio.clip_box(*aoi.to_crs(da.rio.crs).total_bounds), aoi)
+        da = rioxarray.open_rasterio(url).squeeze("band", drop=True)  # lazy: clip reads only the window
         crs = da.rio.crs
-        # where() drops the grid_mapping attr; the COG also carries a 'mapping' coord
-        da = da.where(da != da.rio.nodata).drop_vars("mapping", errors="ignore").rio.write_crs(crs)
-        out[v] = da.rio.reproject(common.utm_crs(), resolution=resolution)
+        # the COG carries a second grid-mapping coord ('mapping'); where() drops grid_mapping
+        da = common.clip(da.drop_vars("mapping", errors="ignore").rio.write_crs(crs), aoi)
+        out[v] = da.where(da != da.rio.nodata).rio.write_crs(crs)
     ds = xr.Dataset(out)
     for v in ds:
         ds[v].attrs["units"] = "m/yr"
@@ -86,25 +93,28 @@ def _download(url: str, dest: Path) -> Path:
     if dest.exists():
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  downloading {url} -> {dest} (one time)")
+    log.info("downloading %s -> %s (one time)", url, dest)
     tmp = dest.with_suffix(dest.suffix + ".part")
     with requests.get(url, stream=True, timeout=600) as r:
         r.raise_for_status()
         with open(tmp, "wb") as fh:
-            for chunk in r.iter_content(1 << 22):
-                fh.write(chunk)
+            fh.writelines(r.iter_content(1 << 22))
     tmp.rename(dest)
     return dest
 
 
-def load_geology(aoi, layers=("AKStategeol_poly", "AKStategeol_arc"),
-                 raw_dir: str = "data/raw/geology") -> dict[str, gpd.GeoDataFrame]:
+def load_geology(aoi, layers=("AKStategeol_poly", "AKStategeol_arc")) -> dict[str, gpd.GeoDataFrame]:
     """Geologic Map of Alaska (Wilson et al., 2015, USGS SIM 3340). The 710 MB shapefile
-    zip is downloaded once to ``raw_dir`` (reading it remotely is slow: GDAL cannot use the
-    .sbn spatial index over HTTP), then read with a bbox filter."""
+    zip goes to the download cache (data/cache/, not part of the container): reading it
+    remotely is slow because GDAL cannot use the .sbn spatial index over HTTP."""
     import pyogrio
 
-    zpath = _download(SIM3340_ZIP, Path(raw_dir) / "sim3340_shp.zip")
+    legacy = Path("data/raw/geology/sim3340_shp.zip")  # earlier cache location
+    dest = common.CACHE / "sim3340_shp.zip"
+    if legacy.exists() and not dest.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        legacy.rename(dest)
+    zpath = _download(SIM3340_ZIP, dest)
     out = {}
     for layer in layers:
         path = f"/vsizip/{zpath.resolve()}/{SIM3340_DIR}/{layer}.shp"
@@ -112,7 +122,7 @@ def load_geology(aoi, layers=("AKStategeol_poly", "AKStategeol_arc"),
         bbox = tuple(aoi.to_crs(info["crs"]).total_bounds)
         gdf = pyogrio.read_dataframe(path, bbox=bbox)
         gdf = gpd.clip(gdf, aoi.to_crs(gdf.crs), keep_geom_type=True)
-        print(f"  SIM3340 {layer}: {len(gdf)} features")
+        log.info("SIM3340 %s: %d features", layer, len(gdf))
         out[layer] = gdf
     return out
 
@@ -126,77 +136,66 @@ def macrostrat_at(lat: float, lon: float) -> list[dict]:
 
 # ---- Soil --------------------------------------------------------------------------------
 
-def load_soilgrids(aoi, props=tuple(SOIL_PROPS), depths=tuple(SOIL_DEPTHS), resolution=250.0) -> xr.Dataset:
-    """SoilGrids 2.0 mean predictions (250 m, Interrupted Goode Homolosine), windowed read
-    from ISRIC VRTs, reprojected to UTM 5N. Dims: (depth, y, x). Expect NaN over glacier
-    ice and bare rock, which covers most of the source area."""
+def load_soilgrids(aoi, props=tuple(SOIL_PROPS), depths=tuple(SOIL_DEPTHS)) -> xr.Dataset:
+    """SoilGrids 2.0 mean predictions on the native 250 m Interrupted Goode Homolosine
+    grid, windowed read from ISRIC VRTs. Dims: (depth, y, x). Expect NaN over glacier ice
+    and bare rock, which covers most of the source area."""
     out = {}
     for p in props:
         layers = []
         for d in depths:
             url = f"/vsicurl/{SOILGRIDS}/{p}/{p}_{d}_mean.vrt"
-            da = rioxarray.open_rasterio(url, chunks={}).squeeze("band", drop=True)
-            da = da.rio.clip_box(*aoi.to_crs(da.rio.crs).total_bounds)
-            da = da.where(da != da.rio.nodata) * SOIL_PROPS[p][1]
-            da = da.rio.write_crs(da.rio.crs).rio.reproject(common.utm_crs(), resolution=resolution)
-            layers.append(common.clip_projected(da, aoi).expand_dims(depth=[d]))
+            da = rioxarray.open_rasterio(url).squeeze("band", drop=True)  # lazy: clip reads only the window
+            crs = da.rio.crs
+            da = common.clip(da, aoi)
+            da = (da.where(da != da.rio.nodata) * SOIL_PROPS[p][1]).rio.write_crs(crs)
+            layers.append(da.expand_dims(depth=[d]))
         out[p] = xr.concat(layers, "depth")
         out[p].attrs["units"] = SOIL_PROPS[p][0]
     ds = xr.Dataset(out)
     top = [float(d.split("-")[0]) for d in depths]
     bot = [float(d.split("-")[1].rstrip("cm")) for d in depths]
     ds = ds.assign_coords(depth_top_cm=("depth", top), depth_bottom_cm=("depth", bot))
-    ds.attrs = common.provenance(source="ISRIC SoilGrids 2.0 (mean)", resolution_m=resolution)
+    ds.attrs = common.provenance(source="ISRIC SoilGrids 2.0 (mean)", resolution_m=250)
     return ds
 
 
 # ---- CLI ---------------------------------------------------------------------------------
 
-_I = Annotated[str, Parameter(name=["--input", "-i"])]
-_O = Annotated[str, Parameter(name=["--output", "-o"])]
-
-
-def _write_vectors(vectors: dict[str, gpd.GeoDataFrame], output_path: str):
-    """One xvec Zarr group per layer under ``output_path``, plus GeoJSON siblings."""
-    stem = Path(output_path)
-    stem.parent.mkdir(parents=True, exist_ok=True)
-    tree = {}
-    for name, gdf in vectors.items():
-        if len(gdf) == 0:
-            continue
-        gdf.to_file(stem.with_name(f"{stem.stem}_{name}.geojson"), driver="GeoJSON")
-        tree[name] = common.gdf_to_xvec(gdf)
-    common.save_datatree(xr.DataTree.from_dict(tree), output_path)
-
-
-def stage_glacier(vectorPath: _I = "aoi/peters_dome_regional.geojson",
-                  output_path: _O = "data/staged/glacier.zarr",
-                  itslive_year: Annotated[str, Parameter(name=["--itslive-year"])] = "0000"):
-    """Stage glacier outlines (RGI, GLIMS), GlaThiDa points and ITS_LIVE velocity."""
-    common.check_s3_env(output_path)
+def stage_glacier(vectorPath: Input = "aoi/peters_dome_regional.geojson",
+                  output_path: Output = STORE,
+                  itslive_year: Annotated[str, Parameter(name=["--itslive-year"])] = "0000",
+                  overwrite: Overwrite = False, skip_existing: SkipExisting = False):
+    """Stage RGI and GLIMS outlines, GlaThiDa points (vectors/glacier/*) and ITS_LIVE
+    velocity (rasters/glacier/itslive_velocity)."""
     aoi = common.load_aoi(vectorPath)
-    vec = load_glacier_outlines(aoi)
-    vel = load_itslive(aoi, itslive_year)
-    tree = {k: common.gdf_to_xvec(v) for k, v in vec.items() if len(v)}
-    tree["itslive_velocity"] = vel
-    for k, v in vec.items():
-        if len(v):
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            v.to_file(Path(output_path).with_name(f"glacier_{k}.geojson"), driver="GeoJSON")
-    common.save_datatree(xr.DataTree.from_dict(tree), output_path)
+    groups = {f"vectors/glacier/{k}": None for k in ("rgi", "glims", "glathida")}
+    todo = {g for g in groups if common.check_group(output_path, g, overwrite, skip_existing)}
+    if todo:
+        for k, gdf in load_glacier_outlines(aoi).items():
+            g = f"vectors/glacier/{k}"
+            if g in todo and len(gdf):
+                common.write_group(common.gdf_to_xvec(gdf), output_path, g, overwrite)
+    g = "rasters/glacier/itslive_velocity"
+    if common.check_group(output_path, g, overwrite, skip_existing):
+        common.write_group(load_itslive(aoi, itslive_year), output_path, g, overwrite)
 
 
-def stage_geology(vectorPath: _I = "aoi/peters_dome_regional.geojson",
-                  output_path: _O = "data/staged/geology.zarr"):
-    """Stage Geologic Map of Alaska units and contacts/faults clipped to the AOI."""
-    common.check_s3_env(output_path)
-    aoi = common.load_aoi(vectorPath)
-    _write_vectors(load_geology(aoi), output_path)
+def stage_geology(vectorPath: Input = "aoi/peters_dome_regional.geojson",
+                  output_path: Output = STORE,
+                  overwrite: Overwrite = False, skip_existing: SkipExisting = False):
+    """Stage Geologic Map of Alaska units and contacts/faults as vectors/geology/*."""
+    groups = {"AKStategeol_poly": "vectors/geology/units", "AKStategeol_arc": "vectors/geology/contacts_faults"}
+    todo = [layer for layer, g in groups.items() if common.check_group(output_path, g, overwrite, skip_existing)]
+    if not todo:
+        return
+    for layer, gdf in load_geology(common.load_aoi(vectorPath), layers=tuple(todo)).items():
+        common.write_group(common.gdf_to_xvec(gdf), output_path, groups[layer], overwrite)
 
 
-def stage_soil(vectorPath: _I = "aoi/AOI.geojson", output_path: _O = "data/staged/soil.zarr",
-               resolution: Annotated[float, Parameter(name=["--resolution"])] = 250.0):
-    """Stage SoilGrids 2.0 layered soil properties (6 depths, 0-200 cm)."""
-    common.check_s3_env(output_path)
-    common.save_zarr(load_soilgrids(common.load_aoi(vectorPath), resolution=resolution), output_path)
-
+def stage_soil(vectorPath: Input = "aoi/AOI.geojson", output_path: Output = STORE,
+               group: Group = "rasters/soil/soilgrids",
+               overwrite: Overwrite = False, skip_existing: SkipExisting = False):
+    """Stage SoilGrids 2.0 layered soil properties (6 depths, 0-200 cm), native grid."""
+    if common.check_group(output_path, group, overwrite, skip_existing):
+        common.write_group(load_soilgrids(common.load_aoi(vectorPath)), output_path, group, overwrite)

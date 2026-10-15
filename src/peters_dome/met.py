@@ -24,9 +24,14 @@ import xarray as xr
 from cyclopts import Parameter
 
 from . import common
+from .params import STORE, End, Group, Input, Output, Overwrite, SkipExisting, Start
 
 ARCHIVE_API = "https://archive-api.open-meteo.com/v1/archive"
 HISTFC_API = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+
+# Open-Meteo hourly conventions: accumulations (precipitation, rain, snowfall) are sums
+# over the preceding hour; the other variables are instantaneous at the timestamp.
+ACCUMULATED = {"precipitation", "rain", "snowfall"}
 
 SURFACE_VARS = {  # open-meteo name: (gaia name, scale to target units, units)
     "temperature_2m": ("temperature", 1.0, "degC"),
@@ -80,11 +85,11 @@ def load_era5(aoi, start_date, end_date, model: str = "era5") -> xr.Dataset:
     records = []
     for k in range(0, len(pts), 50):  # API accepts many locations per call
         chunk = pts[k:k + 50]
-        records += _get(ARCHIVE_API, dict(
-            latitude=",".join(f"{p[0]}" for p in chunk),
-            longitude=",".join(f"{p[1]}" for p in chunk),
-            start_date=pd.Timestamp(start_date).date(), end_date=pd.Timestamp(end_date).date(),
-            hourly=",".join(vars_), models=model, timezone="GMT"))
+        records += _get(ARCHIVE_API, {
+            "latitude": ",".join(f"{p[0]}" for p in chunk),
+            "longitude": ",".join(f"{p[1]}" for p in chunk),
+            "start_date": pd.Timestamp(start_date).date(), "end_date": pd.Timestamp(end_date).date(),
+            "hourly": ",".join(vars_), "models": model, "timezone": "GMT"})
     time = pd.to_datetime(records[0]["hourly"]["time"])
     data = {v: np.full((len(time), len(ys), len(xs)), np.nan, dtype="float32") for v in vars_}
     elev = np.full((len(ys), len(xs)), np.nan, dtype="float32")
@@ -101,6 +106,12 @@ def load_era5(aoi, start_date, end_date, model: str = "era5") -> xr.Dataset:
     )
     ds = ds.dropna("x", how="all", subset=["temperature"]).dropna("y", how="all", subset=["temperature"])
     ds = ds.rio.write_crs("EPSG:4326")
+    # gaia-cli time convention (io.with_time_bounds): each value covers (time - 1 h, time];
+    # cell_methods per variable so `gaia align` sums accumulations and averages the rest
+    ds["time_bounds"] = (("time", "nv"), np.stack([ds.time.values - np.timedelta64(1, "h"), ds.time.values], -1))
+    ds.time.attrs["bounds"] = "time_bounds"
+    for name in [SURFACE_VARS[v][0] for v in vars_]:
+        ds[name].attrs["cell_methods"] = "time: sum" if name in ACCUMULATED else "time: point"
     ds.attrs = common.provenance(source=f"Open-Meteo archive API, model={model}",
                                  note="node values; Open-Meteo snaps request points to the model grid")
     return ds
@@ -109,11 +120,11 @@ def load_era5(aoi, start_date, end_date, model: str = "era5") -> xr.Dataset:
 def load_profiles(points: dict[str, tuple[float, float]], start_date, end_date) -> xr.Dataset:
     hourly = [f"{v}_{lev}hPa" for v in LEVEL_VARS for lev in LEVELS] + ["freezing_level_height"]
     names = list(points)
-    recs = _get(HISTFC_API, dict(
-        latitude=",".join(str(points[n][0]) for n in names),
-        longitude=",".join(str(points[n][1]) for n in names),
-        start_date=pd.Timestamp(start_date).date(), end_date=pd.Timestamp(end_date).date(),
-        hourly=",".join(hourly), timezone="GMT"))
+    recs = _get(HISTFC_API, {
+        "latitude": ",".join(str(points[n][0]) for n in names),
+        "longitude": ",".join(str(points[n][1]) for n in names),
+        "start_date": pd.Timestamp(start_date).date(), "end_date": pd.Timestamp(end_date).date(),
+        "hourly": ",".join(hourly), "timezone": "GMT"})
     time = pd.to_datetime(recs[0]["hourly"]["time"])
     out = {}
     for v, (name, scale, units) in LEVEL_VARS.items():
@@ -142,22 +153,33 @@ def default_points() -> dict[str, tuple[float, float]]:
     }
 
 
-_I = Annotated[str, Parameter(name=["--input", "-i"])]
-_S = Annotated[str, Parameter(name=["--start", "-s"])]
-_E = Annotated[str, Parameter(name=["--end", "-e"])]
-_O = Annotated[str, Parameter(name=["--output", "-o"])]
-
-
-def stage_era5(vectorPath: _I = "aoi/peters_dome_regional.geojson", start_date: _S = "2023-06-01",
-               end_date: _E = "2023-09-21", output_path: _O = "data/staged/met_era5.zarr",
-               model: Annotated[str, Parameter(name=["--model"])] = "era5"):
+def stage_era5(vectorPath: Input = "aoi/peters_dome_regional.geojson", start_date: Start = "2023-06-01",
+               end_date: End = "2023-09-21", output_path: Output = STORE,
+               model: Annotated[str, Parameter(name=["--model"])] = "era5", group: Group = "",
+               overwrite: Overwrite = False, skip_existing: SkipExisting = False):
     """Stage hourly ERA5 / ERA5-Land surface meteorology on reanalysis nodes in the AOI."""
-    common.check_s3_env(output_path)
-    common.save_zarr(load_era5(common.load_aoi(vectorPath), start_date, end_date, model), output_path)
+    group = group or f"rasters/met/{model}"
+    if common.check_group(output_path, group, overwrite, skip_existing):
+        common.write_group(load_era5(common.load_aoi(vectorPath), start_date, end_date, model),
+                           output_path, group, overwrite)
 
 
-def stage_profile(start_date: _S = "2023-09-13T00:00", end_date: _E = "2023-09-14T12:00",
-                  output_path: _O = "data/staged/met_profiles.zarr"):
+def stage_profile(start_date: Start = "2023-09-13T00:00", end_date: End = "2023-09-14T12:00",
+                  output_path: Output = STORE, group: Group = "model/atmosphere_profiles",
+                  overwrite: Overwrite = False, skip_existing: SkipExisting = False):
     """Stage hourly pressure-level atmospheric profiles at the source and infrasound path."""
-    common.check_s3_env(output_path)
-    common.save_zarr(load_profiles(default_points(), start_date, end_date), output_path)
+    if common.check_group(output_path, group, overwrite, skip_existing):
+        common.write_group(load_profiles(default_points(), start_date, end_date), output_path, group, overwrite)
+
+
+def stage_synoptic(vectorPath: Input = "aoi/peters_dome_regional.geojson", start_date: Start = "2023-06-01",
+                   end_date: End = "2023-09-21", output_path: Output = STORE,
+                   group: Group = "stations/synoptic",
+                   overwrite: Overwrite = False, skip_existing: SkipExisting = False):
+    """In-situ hourly precipitation via gaia-cli's Synoptic loader (needs SYNOPTIC_TOKEN),
+    written into the container store instead of a separate ``gaia stage synoptic`` store."""
+    from gaia_cli import synoptic
+
+    if common.check_group(output_path, group, overwrite, skip_existing):
+        da = synoptic.load(common.load_aoi(vectorPath), start_date, end_date)
+        common.write_group(common.stations_to_dataset(da), output_path, group, overwrite)

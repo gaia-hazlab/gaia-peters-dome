@@ -13,6 +13,7 @@ Harmonization:
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 import geopandas as gpd
@@ -22,10 +23,15 @@ import xarray as xr
 from cyclopts import Parameter
 from obspy import Stream, UTCDateTime
 from obspy.clients.fdsn import Client
+from obspy.clients.fdsn.header import FDSNException
+from obspy.core.util.obspy_types import ObsPyException
 from obspy.geodetics import gps2dist_azimuth
 from shapely.geometry import Point
 
 from . import common
+from .params import STORE, End, Group, Input, Output, Overwrite, SkipExisting, Start
+
+log = logging.getLogger(__name__)
 
 FDSN_URL = "https://service.earthscope.org"
 SEISMIC_CHANNELS = "HH?,BH?"
@@ -108,8 +114,8 @@ def _bulk(client, nslc: list[tuple[str, str, str, str]], t0, t1, chunk: int = 50
     for k in range(0, len(nslc), chunk):
         try:
             out += client.get_waveforms_bulk([(*r, t0, t1) for r in nslc[k:k + chunk]])
-        except Exception as e:  # FDSNNoDataException, timeouts
-            print(f"  bulk chunk {k // chunk}: {type(e).__name__}")
+        except (FDSNException, OSError) as e:  # no data, timeouts
+            log.info(f"bulk chunk {k // chunk}: {type(e).__name__}")
     return out
 
 
@@ -127,25 +133,25 @@ def load_seismic(
     t0, t1 = UTCDateTime(start_date), UTCDateTime(end_date)
     inv = find_stations(aoi, start_date, end_date, channels, client, max_distance_km)
     picks = _pick_channels(inv, channels)
-    npts = int(round((t1 - t0) * sampling_rate))
+    npts = round((t1 - t0) * sampling_rate)
     time = pd.date_range(t0.datetime, periods=npts, freq=pd.Timedelta(seconds=1 / sampling_rate))
     lat0, lon0 = _event_center()
     pre_filt = (0.004, 0.005, 0.4 * sampling_rate, 0.45 * sampling_rate)
 
-    print(f"  requesting {len(picks)} stations")
+    log.info(f"requesting {len(picks)} stations")
     allst = _bulk(client, [(n.code, s.code, loc, band + "?") for n, s, loc, band, _ in picks], t0 - 120, t1 + 120)
     arrays = []
     for net, sta, loc, band, group in picks:
         st = allst.select(network=net.code, station=sta.code, location=loc, channel=band + "?").copy()
         if not len(st):
-            print(f"  skip {net.code}.{sta.code}: no data")
+            log.info(f"skip {net.code}.{sta.code}: no data")
             continue
         st = st.merge(method=1, fill_value=None).split()
         st.detrend("demean")
         try:
             st.remove_response(inventory=inv, output=output, pre_filt=pre_filt, water_level=None)
-        except Exception as e:
-            print(f"  skip {net.code}.{sta.code}: response {e}")
+        except (ValueError, ObsPyException) as e:
+            log.info(f"skip {net.code}.{sta.code}: response {e}")
             continue
         comps = {}
         for cha in group:
@@ -154,7 +160,7 @@ def load_seismic(
                 comps[_component(cha)] = _to_grid(sub, t0, npts, sampling_rate)
         if not comps:
             continue
-        dist_m, az, baz = gps2dist_azimuth(lat0, lon0, sta.latitude, sta.longitude)
+        dist_m, _az, baz = gps2dist_azimuth(lat0, lon0, sta.latitude, sta.longitude)
         da = xr.DataArray(
             np.stack(list(comps.values())),
             dims=("component", "time"),
@@ -170,7 +176,7 @@ def load_seismic(
             geometry=("station", [Point(sta.longitude, sta.latitude)]),
         )
         arrays.append(da)
-        print(f"  {net.code}.{sta.code}.{loc}.{band}? {dist_m/1e3:6.1f} km  {list(comps)}")
+        log.info(f"{net.code}.{sta.code}.{loc}.{band}? {dist_m/1e3:6.1f} km  {list(comps)}")
 
     if not arrays:
         raise RuntimeError("No waveforms retrieved")
@@ -199,7 +205,7 @@ def load_infrasound(
     client = Client(base_url=fdsn_url)
     t0, t1 = UTCDateTime(start_date), UTCDateTime(end_date)
     inv = find_stations(aoi, start_date, end_date, channels, client, max_distance_km)
-    npts = int(round((t1 - t0) * sampling_rate))
+    npts = round((t1 - t0) * sampling_rate)
     time = pd.date_range(t0.datetime, periods=npts, freq=pd.Timedelta(seconds=1 / sampling_rate))
     lat0, lon0 = _event_center()
 
@@ -210,7 +216,7 @@ def load_infrasound(
             chans = sorted(sta.channels, key=lambda c: (order.index(c.code) if c.code in order else 9, c.location_code))
             if chans:
                 picks.append((net, sta, chans[0]))
-    print(f"  requesting {len(picks)} stations")
+    log.info(f"requesting {len(picks)} stations")
     allst = _bulk(client, [(n.code, s.code, c.location_code, c.code) for n, s, c in picks], t0 - 60, t1 + 60)
 
     arrays = []
@@ -222,10 +228,10 @@ def load_infrasound(
             st = st.merge(method=1, fill_value=None).split()
             st.detrend("demean")
             st.remove_sensitivity(inventory=inv)
-        except Exception as e:
-            print(f"  skip {net.code}.{sta.code}: {e}")
+        except (ValueError, ObsPyException) as e:
+            log.info(f"skip {net.code}.{sta.code}: {e}")
             continue
-        dist_m, az, baz = gps2dist_azimuth(lat0, lon0, sta.latitude, sta.longitude)
+        dist_m, _az, baz = gps2dist_azimuth(lat0, lon0, sta.latitude, sta.longitude)
         da = xr.DataArray(_to_grid(st, t0, npts, sampling_rate), dims="time", coords={"time": time})
         da = da.expand_dims(station=[".".join(filter(None, [net.code, sta.code, cha.location_code]))]).assign_coords(
             network=("station", [net.code]),
@@ -236,7 +242,7 @@ def load_infrasound(
             geometry=("station", [Point(sta.longitude, sta.latitude)]),
         )
         arrays.append(da)
-        print(f"  {net.code}.{sta.code}.{cha.location_code}.{cha.code} {dist_m/1e3:6.1f} km")
+        log.info(f"{net.code}.{sta.code}.{cha.location_code}.{cha.code} {dist_m/1e3:6.1f} km")
 
     if not arrays:
         raise RuntimeError("No infrasound retrieved")
@@ -252,31 +258,39 @@ def load_infrasound(
 # ---- CLI entrypoints (gaia-cli parameter conventions) ----------------------------------
 
 def stage_seismic(
-    vectorPath: Annotated[str, Parameter(name=["--input", "-i"])] = "aoi/peters_dome_waveforms.geojson",
-    start_date: Annotated[str, Parameter(name=["--start", "-s"])] = "2023-09-14T01:50:00",
-    end_date: Annotated[str, Parameter(name=["--end", "-e"])] = "2023-09-14T02:30:00",
-    output_path: Annotated[str, Parameter(name=["--output", "-o"])] = "data/staged/seismic.zarr",
+    vectorPath: Input = "aoi/peters_dome_waveforms.geojson",
+    start_date: Start = "2023-09-14T01:50:00",
+    end_date: End = "2023-09-14T02:30:00",
+    output_path: Output = STORE,
+    group: Group = "stations/seismic",
     channels: Annotated[str, Parameter(name=["--channels"])] = SEISMIC_CHANNELS,
     sampling_rate: Annotated[float, Parameter(name=["--sampling-rate"])] = 20.0,
     units: Annotated[str, Parameter(name=["--units"])] = "VEL",
     max_distance_km: Annotated[float, Parameter(name=["--max-distance-km"])] = 250.0,
+    overwrite: Overwrite = False,
+    skip_existing: SkipExisting = False,
 ):
     """Stage seismic waveforms (response removed) on a common time grid."""
-    common.check_s3_env(output_path)
+    if not common.check_group(output_path, group, overwrite, skip_existing):
+        return
     da = load_seismic(common.load_aoi(vectorPath), start_date, end_date, channels,
                       sampling_rate, units, max_distance_km)
-    common.save_xvec_zarr(da, output_path)
+    common.write_group(common.stations_to_dataset(da), output_path, group, overwrite)
 
 
 def stage_infrasound(
-    vectorPath: Annotated[str, Parameter(name=["--input", "-i"])] = "aoi/peters_dome_waveforms.geojson",
-    start_date: Annotated[str, Parameter(name=["--start", "-s"])] = "2023-09-14T01:50:00",
-    end_date: Annotated[str, Parameter(name=["--end", "-e"])] = "2023-09-14T03:00:00",
-    output_path: Annotated[str, Parameter(name=["--output", "-o"])] = "data/staged/infrasound.zarr",
+    vectorPath: Input = "aoi/peters_dome_waveforms.geojson",
+    start_date: Start = "2023-09-14T01:50:00",
+    end_date: End = "2023-09-14T03:00:00",
+    output_path: Output = STORE,
+    group: Group = "stations/infrasound",
     channels: Annotated[str, Parameter(name=["--channels"])] = INFRASOUND_CHANNELS,
     sampling_rate: Annotated[float, Parameter(name=["--sampling-rate"])] = 20.0,
+    overwrite: Overwrite = False,
+    skip_existing: SkipExisting = False,
 ):
     """Stage infrasound pressure (Pa) on a common time grid."""
-    common.check_s3_env(output_path)
+    if not common.check_group(output_path, group, overwrite, skip_existing):
+        return
     da = load_infrasound(common.load_aoi(vectorPath), start_date, end_date, channels, sampling_rate)
-    common.save_xvec_zarr(da, output_path)
+    common.write_group(common.stations_to_dataset(da), output_path, group, overwrite)

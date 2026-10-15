@@ -1,7 +1,8 @@
 """Render the GitHub Pages report: docs/index.html + docs/figures/*.png.
 
-Reads the stores in data/staged/ (run scripts/stage_all.sh first). A panel whose store is
-missing is listed as "not staged" in the page instead of failing the build.
+Reads the groups of the single container store data/peters_dome.zarr (run
+scripts/stage_all.sh first). A panel whose group is missing is listed as "not staged" in
+the page instead of failing the build.
 
     pixi run report
 """
@@ -13,22 +14,21 @@ import html
 import json
 import subprocess
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import geopandas as gpd
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-import xarray as xr  # noqa: E402
-import xvec  # noqa: E402, F401
-from matplotlib.colors import LightSource, TwoSlopeNorm  # noqa: E402
-from scipy.signal import butter, sosfiltfilt  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import xvec  # noqa: F401
+from matplotlib.colors import LightSource, TwoSlopeNorm
+from scipy.signal import butter, sosfiltfilt
 
-from peters_dome import common  # noqa: E402
+from peters_dome import common
 
 # Reference palette (dataviz skill, references/palette.md), light mode.
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
@@ -48,15 +48,11 @@ T0 = np.datetime64(EV["origin_time_utc"].rstrip("Z"), "ns")
 TPRE = np.datetime64(EV["precursor_time_utc"].rstrip("Z"), "ns")
 
 
-def _open(staged: Path, name: str, group: str | None = None, xvec_decode=False):
-    p = staged / name
-    if not p.exists():
-        raise FileNotFoundError(f"{name} not staged")
-    if group:
-        ds = xr.open_datatree(p, engine="zarr", consolidated=False)[group].to_dataset()
-    else:
-        ds = xr.open_zarr(p, consolidated=False)
-    return ds.xvec.decode_cf() if xvec_decode else ds
+def _open(store: str, group: str, xvec_decode=False):
+    if not common.group_exists(store, group):
+        raise FileNotFoundError(f"{group} not staged")
+    ds = common.open_group(store, group, decode_xvec=xvec_decode)
+    return common.with_crs(ds) if not xvec_decode else ds
 
 
 def _bandpass(x, fs, lo, hi):
@@ -65,9 +61,9 @@ def _bandpass(x, fs, lo, hi):
     return sosfiltfilt(sos, x)
 
 
-def _outlines(staged: Path, crs="EPSG:32605"):
-    p = staged / "release_outlines.geojson"
-    return gpd.read_file(p).to_crs(crs) if p.exists() else None
+def _outlines(store: str, crs="EPSG:32605"):
+    g = "vectors/landslide_outlines"
+    return common.open_vectors(store, g).to_crs(crs) if common.group_exists(store, g) else None
 
 
 def _draw_outlines(ax, ol):
@@ -84,14 +80,14 @@ def _rel_s(t):
 # ---- figures -----------------------------------------------------------------------------
 
 def fig_map(staged, out):
-    seis = _open(staged, "seismic.zarr", xvec_decode=True)
-    infra = _open(staged, "infrasound.zarr", xvec_decode=True)
+    seis = _open(staged, "stations/seismic", xvec_decode=True)
+    infra = _open(staged, "stations/infrasound", xvec_decode=True)
     fig, ax = plt.subplots(figsize=(7.2, 6.0))
     try:
         coast = gpd.read_file(COAST, bbox=(-160, 58, -140, 68))
         coast.plot(ax=ax, color=MUTED, lw=0.6)
-    except Exception:
-        pass
+    except (OSError, ValueError) as e:  # coastline is decoration; draw the map without it
+        print(f"  map: no coastline ({e})")
     lat0, lon0 = EV["latitude"], EV["longitude"]
     for r in (100, 200, 300, 400):
         az = np.radians(np.arange(0, 361, 2))
@@ -114,7 +110,7 @@ def fig_map(staged, out):
         g = infra.sel(geometry=infra.station.isin(i53).values).geometry.values
         cx, cy = np.mean([p.x for p in g]), np.mean([p.y for p in g])
         ax.annotate("I53US array", (cx, cy), xytext=(cx + 0.6, cy + 0.35), color=INK2, fontsize=8,
-                    arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.6))
+                    arrowprops={"arrowstyle": "-", "color": MUTED, "lw": 0.6})
     ax.scatter([lon0], [lat0], marker="*", s=260, color=INK, edgecolor="white", lw=1.0, zorder=5,
                label="Peters Dome landslide")
     ax.set_xlim(lon0 - 9.5, lon0 + 9.5)
@@ -129,10 +125,10 @@ def fig_map(staged, out):
     rows = []
     for ds, kind in ((seis, "seismic"), (infra, "infrasound")):
         for k in range(ds.sizes["geometry"]):
-            rows.append(dict(type=kind, station=str(ds.station.values[k]),
-                             channel=str(ds.channel.values[k]),
-                             distance_km=round(float(ds.distance_km.values[k]), 1),
-                             back_azimuth_deg=round(float(ds.back_azimuth_deg.values[k]), 1)))
+            rows.append({"type": kind, "station": str(ds.station.values[k]),
+                             "channel": str(ds.channel.values[k]),
+                             "distance_km": round(float(ds.distance_km.values[k]), 1),
+                             "back_azimuth_deg": round(float(ds.back_azimuth_deg.values[k]), 1)})
     return pd.DataFrame(rows).sort_values(["type", "distance_km"])
 
 
@@ -160,7 +156,7 @@ def _section(ax, da, fs, lo, hi, tmin, tmax, nmax=30, scale=0.9, color=INK, labe
 
 
 def fig_seismic(staged, out):
-    ds = _open(staged, "seismic.zarr", xvec_decode=True)
+    ds = _open(staged, "stations/seismic", xvec_decode=True)
     fs = float(ds.velocity.attrs.get("sampling_rate_hz", 20))
     da = ds.velocity.sel(component="Z")
     fig, axes = plt.subplots(1, 2, figsize=(10, 6.2), sharey=True)
@@ -178,7 +174,7 @@ def fig_seismic(staged, out):
 
 
 def fig_infrasound(staged, out):
-    ds = _open(staged, "infrasound.zarr", xvec_decode=True)
+    ds = _open(staged, "stations/infrasound", xvec_decode=True)
     fs = float(ds.pressure.attrs.get("sampling_rate_hz", 20))
     da = ds.pressure
     fig, ax = plt.subplots(figsize=(10, 6.4))
@@ -198,7 +194,7 @@ def fig_infrasound(staged, out):
 
 
 def fig_i53(staged, out):
-    ds = _open(staged, "infrasound.zarr", xvec_decode=True)
+    ds = _open(staged, "stations/infrasound", xvec_decode=True)
     fs = float(ds.pressure.attrs.get("sampling_rate_hz", 20))
     m = np.array(["I53" in str(s) for s in ds.station.values])
     if not m.any():
@@ -228,7 +224,7 @@ def fig_i53(staged, out):
 
 
 def fig_force(staged, out):
-    ds = _open(staged, "usgs_release.zarr", "force")
+    ds = _open(staged, "model/force_published")
     t = ds.time_offset_s.values
     fig, axes = plt.subplots(3, 1, figsize=(8, 6), sharex=True)
     for ax, comp in zip(axes, ["up", "north", "east"]):
@@ -245,11 +241,11 @@ def fig_force(staged, out):
 
 
 def fig_sar(staged, out):
-    ds = common_crs(_open(staged, "sar_s1_rtc.zarr"))
+    ds = _open(staged, "rasters/sar/sentinel1_rtc")
     t = ds.time.values
     b, a = np.where(t < T0)[0][-1], np.where(t > T0)[0][0]
     vb, va = ds.vv.isel(time=b).load(), ds.vv.isel(time=a).load()
-    db = lambda x: 10 * np.log10(x)  # noqa: E731
+    db = lambda x: 10 * np.log10(x)
     lr = db(va) - db(vb)
     ol = _outlines(staged)
     fig, axes = plt.subplots(1, 3, figsize=(13, 5.2), sharex=True, sharey=True, layout="constrained")
@@ -266,14 +262,14 @@ def fig_sar(staged, out):
         ax.set_aspect("equal")
         ax.set_ylabel("")
     _km_axes(*axes)
-    orb = f"{str(ds.orbit_state.values[a])} track {int(ds.relative_orbit.values[a])}" if "orbit_state" in ds.coords else ""
+    orb = f"{ds.orbit_state.values[a]!s} track {int(ds.relative_orbit.values[a])}" if "orbit_state" in ds.coords else ""
     fig.suptitle(f"Sentinel-1 RTC {orb}", fontsize=10, fontweight="bold")
     fig.savefig(out)
     plt.close(fig)
 
 
 def fig_optical(staged, out):
-    ds = common_crs(_open(staged, "optical_s2.zarr"))
+    ds = _open(staged, "rasters/optical/sentinel2")
     clear = ds.scl.isin([4, 5, 6, 11]).mean(("x", "y")).compute().values
     t = ds.time.values
     bi, ai = np.where(t < T0)[0], np.where(t > T0)[0]
@@ -295,7 +291,7 @@ def fig_optical(staged, out):
 
 
 def fig_shaltop(staged, out):
-    sh = _open(staged, "usgs_release.zarr", "shaltop")
+    sh = _open(staged, "model/shaltop")
     topo = sh.topography.load()
     dx = float(abs(sh.x[1] - sh.x[0]))
     hs = LightSource(azdeg=315, altdeg=35).hillshade(topo.values[::-1] if sh.y[0] < sh.y[-1] else topo.values, dx=dx, dy=dx)
@@ -321,11 +317,11 @@ def fig_shaltop(staged, out):
     fig.tight_layout()
     fig.savefig(out)
     plt.close(fig)
-    return dict(p99=float(np.nanpercentile(vmax, 99)), raw=float(sh.flow_speed.max()))
+    return {"p99": float(np.nanpercentile(vmax, 99)), "raw": float(sh.flow_speed.max())}
 
 
 def fig_met(staged, out):
-    ds = _open(staged, "met_era5.zarr")
+    ds = _open(staged, "rasters/met/era5")
     node = ds.sel(x=EV["source_area_lon"], y=EV["source_area_lat"], method="nearest").load()
     daily_t = node.temperature.resample(time="1D").mean()
     tmin = node.temperature.resample(time="1D").min()
@@ -347,12 +343,12 @@ def fig_met(staged, out):
     fig.savefig(out)
     plt.close(fig)
     pre = node.sel(time=slice(T0 - np.timedelta64(14, "D"), T0))
-    return dict(t_mean_14d=float(pre.temperature.mean()), p_sum_14d=float(pre.precipitation.sum()),
-                t_max_14d=float(pre.temperature.max()), node_elev=float(node.node_elevation))
+    return {"t_mean_14d": float(pre.temperature.mean()), "p_sum_14d": float(pre.precipitation.sum()),
+                "t_max_14d": float(pre.temperature.max()), "node_elev": float(node.node_elevation)}
 
 
 def fig_profile(staged, out):
-    ds = _open(staged, "met_profiles.zarr").load()
+    ds = _open(staged, "model/atmosphere_profiles").load()
     k = int(np.argmin(np.abs(ds.time.values - T0)))
     fig, axes = plt.subplots(1, 2, figsize=(8.5, 5.2), sharey=True)
     for pt, color in (("source", BLUE), ("path_midpoint", AQUA), ("I53US", ORANGE)):
@@ -374,14 +370,15 @@ def fig_profile(staged, out):
 
 
 def fig_glacier(staged, out):
-    vel = common_crs(_open(staged, "glacier.zarr", "itslive_velocity"))
-    v = vel.v.load()
+    vel = _open(staged, "rasters/glacier/itslive_velocity")
+    # native EPSG:3413 grid; reprojected here for display only
+    v = vel.v.load().rio.reproject(common.utm_crs())
+    v = v.where(v != v.rio.nodata) if v.rio.nodata is not None else v
     fig, ax = plt.subplots(figsize=(8, 5.6))
     im = v.plot.imshow(ax=ax, cmap="Blues", vmin=0, vmax=float(np.nanpercentile(v, 99)), add_colorbar=False)
     fig.colorbar(im, ax=ax, shrink=0.7, label="surface speed (m/yr)")
-    rgi = staged / "glacier_rgi.geojson"
-    if rgi.exists():
-        gpd.read_file(rgi).to_crs(common.utm_crs()).boundary.plot(ax=ax, color=INK2, lw=0.4)
+    if common.group_exists(staged, "vectors/glacier/rgi"):
+        common.open_vectors(staged, "vectors/glacier/rgi").to_crs(common.utm_crs()).boundary.plot(ax=ax, color=INK2, lw=0.4)
     ol = _outlines(staged)
     _draw_outlines(ax, ol)
     src = gpd.GeoSeries.from_xy([EV["source_area_lon"]], [EV["source_area_lat"]], crs=4326).to_crs(common.utm_crs())
@@ -406,14 +403,6 @@ def _km_axes(*axes):
     axes[0].set_ylabel("northing (km)")
 
 
-def common_crs(ds):
-    if "spatial_ref" in ds.coords or "spatial_ref" in ds:
-        wkt = ds["spatial_ref"].attrs.get("crs_wkt") or ds["spatial_ref"].attrs.get("spatial_ref")
-        if wkt:
-            ds = ds.rio.write_crs(wkt)
-    return ds
-
-
 # ---- page --------------------------------------------------------------------------------
 
 FIGS = [
@@ -426,7 +415,7 @@ FIGS = [
     ("sar", fig_sar, "Sentinel-1 before / after", "Radiometrically terrain-corrected γ⁰ VV from Planetary Computer <code>sentinel-1-rtc</code>, last scene before and first after the event (12-day repeat, Sentinel-1A only in 2023). Outlines from the USGS release: solid = source + deposit, dashed = source."),
     ("optical", fig_optical, "Sentinel-2 before / after", "Sentinel-2 L2A true colour (Earth Search, collection 1), clearest scene on each side of the event by SCL clear-sky fraction (snow counts as clear); gamma 1.6 for display. Same outlines as above. The post-event scene is under fresh snow, so the deposit is not resolvable in true colour here; the Sentinel-1 change map above shows it."),
     ("shaltop", fig_shaltop, "Flow model", "SHALTOP run 0520 from the USGS release over its own topography (hillshade). Speed is shown only where flow thickness is at least 1 m: unmasked, thin margin cells reach {result[raw]:.0f} m/s, which is numerical, not physical. With the mask, the 99th percentile of the per-cell maximum speed is {result[p99]:.0f} m/s; the paper reports speeds exceeding 60 m/s."),
-    ("glacier", fig_glacier, "Glacier context", "ITS_LIVE v2 composite surface speed (120 m), reprojected to UTM 5N, with RGI v6 Alaska outlines served by GLIMS. Star: source area."),
+    ("glacier", fig_glacier, "Glacier context", "ITS_LIVE v2 composite surface speed (120 m), reprojected to UTM 5N, with RGI v6 Alaska outlines served by GLIMS (whole glaciers that intersect the regional AOI, so they extend past the clipped velocity field). Star: source area. ITS_LIVE is stored on its native EPSG:3413 grid and reprojected here for display only."),
     ("met", fig_met, "Antecedent weather", "Hourly ERA5 (0.25°) via the Open-Meteo archive API at the node nearest the source, aggregated to days. The node's model elevation is far below the ~3,000 m source, so absolute temperatures are warm-biased for the release zone; use the series for timing of warm spells and storms, not for the source temperature. 14 days before the event: mean {result[t_mean_14d]:.1f} °C, max {result[t_max_14d]:.1f} °C, precipitation {result[p_sum_14d]:.0f} mm."),
     ("profile", fig_profile, "Atmosphere at event time", "Hourly pressure-level profiles at the source, the great-circle midpoint, and I53US, for the hour nearest the origin. Freezing level at the source: {result:.0f} m. Top level 30 hPa (~24 km), so stratospheric ducting is not resolved here."),
 ]
@@ -489,7 +478,7 @@ def build_page(results, station_table, staged_list, sha):
                             f"</tr></thead><tbody>{rows}</tbody></table></details>")
     nav = "".join(f'<a href="#{f[0]}">{f[2]}</a>' for f in FIGS)
     staged_rows = "".join(f"<tr><td><code>{n}</code></td></tr>" for n in staged_list)
-    built = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    built = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Peters Dome Landslide</title>
@@ -505,9 +494,9 @@ The force-time function, SHALTOP run and source/deposit outlines are the publish
 <div class="tiles">{''.join(f'<div class="tile"><div class="v">{v}</div><div class="k">{k}</div></div>' for k, v in tiles)}</div>
 <nav>{nav}</nav>
 {''.join(sections)}
-<h2 id="data">Staged stores in this build</h2>
+<h2 id="data">Groups in <code>peters_dome.zarr</code> for this build</h2>
 <table><tbody>{staged_rows}</tbody></table>
-<p>Reproduce: <code>pixi run stage-all &amp;&amp; pixi run report</code> in
+<p>One Zarr v3 store, gaia-cli layout; open with <code>gaia_cli.io.open_datatree("data/peters_dome.zarr")</code>. Reproduce: <code>pixi run stage-all &amp;&amp; pixi run report</code> in
 <a href="https://github.com/gaia-hazlab/gaia-peters-dome">gaia-hazlab/gaia-peters-dome</a>.</p>
 <footer>Built {built} from commit <code>{sha}</code>. Origin time and location: USGS ComCat; volume, outlines, published force-time function and SHALTOP run: USGS data release (not recomputed); peak speed: paper abstract.</footer>
 </main></body></html>"""
@@ -515,12 +504,12 @@ The force-time function, SHALTOP run and source/deposit outlines are the publish
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--staged", default="data/staged")
+    ap.add_argument("--store", default=common.STORE)
     ap.add_argument("--out", default="docs")
     ap.add_argument("--skip", default="", help="comma-separated panel ids to leave out (e.g. stores still being written)")
     a = ap.parse_args()
     skip = set(filter(None, a.skip.split(",")))
-    staged, out = Path(a.staged), Path(a.out)
+    staged, out = a.store, Path(a.out)
     (out / "figures").mkdir(parents=True, exist_ok=True)
     results, table = {}, None
     for fid, fn, _, _ in FIGS:
@@ -534,16 +523,18 @@ def main():
                 table, r = r, len(r)
             results[fid] = r
             print(f"  ok   {fid}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  one failed panel must not fail the page
             results[fid] = e
             print(f"  skip {fid}: {type(e).__name__}: {e}")
             if not isinstance(e, FileNotFoundError):
                 traceback.print_exc()
     try:
         sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         sha = "unknown"
-    staged_list = sorted(p.name for p in staged.glob("*.zarr"))
+    tree = common.gio.open_datatree(staged)
+    staged_list = [f"{p} ({', '.join(f'{k}={v}' for k, v in node.dataset.sizes.items())})"
+                   for p, node in tree.subtree_with_keys if node.dataset.data_vars]
     (out / "index.html").write_text(build_page(results, table, staged_list, sha))
     (out / ".nojekyll").write_text("")
     (out / "build.json").write_text(json.dumps({k: (str(v) if isinstance(v, Exception) else "ok") for k, v in results.items()}, indent=1))

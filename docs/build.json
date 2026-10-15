@@ -7,7 +7,7 @@
  "sar": "ok",
  "optical": "ok",
  "shaltop": "ok",
- "glacier": "not staged yet in this build",
+ "glacier": "ok",
  "met": "ok",
  "profile": "ok"
 }

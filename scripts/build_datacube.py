@@ -1,23 +1,27 @@
-"""Put the local-AOI layers on one grid: UTM 5N (EPSG:32605), 10 m, extent of
-aoi/peters_dome_local.geojson. Output: data/peters_dome_datacube.zarr, dims (y, x) plus
-``depth`` for soil and ``epoch`` (before/after) for imagery.
+"""Event datacube: put the local-AOI layers on one grid (UTM 5N, EPSG:32605, 10 m, extent
+of aoi/peters_dome_local.geojson) and write it as the ``datacube`` group of the SAME
+container store. Dims (y, x), plus ``depth`` for soil and ``epoch`` (before/after) for
+imagery.
 
-Reads from data/staged/ (run stage_all.sh first). Layers whose store is missing are
-skipped. Before/after imagery = last acquisition before and first after the ComCat
-origin time in config/event.yml; Sentinel-2 scenes are ranked by clear-sky fraction
-from the SCL band (classes 4 vegetation, 5 bare, 6 water, 11 snow/ice count as clear).
+Why not ``gaia align``: align aggregates every timed raster to the coarsest product's time
+step (here hourly ERA5 would set the step for 12-day SAR) and writes a separate store. The
+cube needs event-specific before/after scene selection instead. ``gaia align`` still works
+on the container for the met rasters, e.g.
+``gaia align -i data/peters_dome.zarr -o met_aligned.zarr --like rasters/met/era5``.
 
-Caveats recorded as attributes on the output:
-- dh_post_minus_mosaic mixes the release SETSM DEM (aligned, vertical reference per
-  release metadata) with the ArcticDEM v4.1 mosaic (WGS84 ellipsoid); co-register
-  before quantitative use.
+Before/after imagery = last acquisition before and first after the ComCat origin time in
+config/event.yml; Sentinel-2 scenes are ranked by clear-sky fraction from the SCL band
+(classes 4 vegetation, 5 bare, 6 water, 11 snow/ice count as clear). Categorical layers
+carry ``flag_values`` (gaia-cli convention: resampled with mode, never averaged).
+
+Caveat recorded on the layer: dh_post_minus_mosaic mixes the release SETSM DEM with the
+ArcticDEM v4.1 mosaic (WGS84 ellipsoid) without co-registration.
 """
 
 from __future__ import annotations
 
 import argparse
-import shutil
-from pathlib import Path
+import logging
 
 import geopandas as gpd
 import numpy as np
@@ -29,6 +33,7 @@ from rasterio.features import rasterize
 
 from peters_dome import common
 
+log = logging.getLogger("peters_dome.cube")
 CLEAR_SCL = [4, 5, 6, 11]
 
 
@@ -41,165 +46,151 @@ def template(aoi: gpd.GeoDataFrame, res: float) -> xr.DataArray:
 
 
 def match(da, tmpl, resampling=Resampling.bilinear):
-    if "spatial_ref" in da.coords:
-        da = da.rio.write_crs(da.rio.crs)
-    return da.rio.reproject_match(tmpl, resampling=resampling).where(lambda v: np.isfinite(v))
-
-
-def _open(staged: Path, name: str, group: str | None = None):
-    p = staged / name
-    if not p.exists():
-        print(f"  missing {name}, skipped")
-        return None
-    if group:
-        return xr.open_datatree(p, engine="zarr", consolidated=False)[group].to_dataset()
-    return xr.open_zarr(p, consolidated=False)
-
-
-def _crs(ds):
-    """Restore CRS that rioxarray stores in spatial_ref after a Zarr round trip."""
-    if "spatial_ref" in ds.coords or "spatial_ref" in ds:
-        wkt = ds["spatial_ref"].attrs.get("crs_wkt") or ds["spatial_ref"].attrs.get("spatial_ref")
-        if wkt:
-            ds = ds.rio.write_crs(wkt)
-    return ds
+    return da.rio.reproject_match(tmpl, resampling=resampling).where(np.isfinite)
 
 
 def pre_post(ds, t_event, score=None):
     t = ds.time.values
     before, after = np.where(t < t_event)[0], np.where(t > t_event)[0]
-    if score is not None:
-        s = score.values
-        before = before[np.argsort(s[before])[::-1]][:1] if len(before) else before
-        after = after[np.argsort(s[after])[::-1]][:1] if len(after) else after
-    else:
-        before, after = before[-1:], after[:1]
     if not len(before) or not len(after):
         return None
-    out = xr.concat([ds.isel(time=before[0]), ds.isel(time=after[0])], dim="epoch")
+    if score is not None:
+        s = score.values
+        b, a = before[np.argmax(s[before])], after[np.argmax(s[after])]
+    else:
+        b, a = before[-1], after[0]
+    out = xr.concat([ds.isel(time=b), ds.isel(time=a)], dim="epoch")
     return out.assign_coords(epoch=["before", "after"])
 
 
-def build(staged: Path, res: float) -> xr.Dataset:
+def _burn(geoms, tmpl, value=1, dtype="uint8"):
+    shapes = [(g, value) for g in geoms if g is not None and not g.is_empty]
+    if not shapes:
+        return tmpl.copy(data=np.zeros(tmpl.shape, dtype))
+    return tmpl.copy(data=rasterize(shapes, out_shape=tmpl.shape, transform=tmpl.rio.transform(),
+                                    fill=0, dtype=dtype))
+
+
+class Store:
+    def __init__(self, path):
+        self.path = path
+
+    def has(self, group):
+        return common.group_exists(self.path, group)
+
+    def raster(self, group):
+        return common.with_crs(common.open_group(self.path, group))
+
+    def vectors(self, group):
+        return common.open_vectors(self.path, group).to_crs(common.utm_crs())
+
+
+def build(store: Store, res: float) -> xr.Dataset:
     ev = common.event()["event"]
     t_event = np.datetime64(pd.Timestamp(ev["origin_time_utc"]).tz_localize(None), "ns")
     aoi = common.load_aoi(str(common.ROOT / "aoi/peters_dome_local.geojson"))
     tmpl = template(aoi, res)
     layers: dict[str, xr.DataArray] = {}
+    coords = {}
+
+    def have(group):
+        ok = store.has(group)
+        if not ok:
+            log.info("missing %s, skipped", group)
+        return ok
 
     # topography
-    for name, key in [("dem_copdem.zarr", "elevation_copdem"),
-                      ("dem_arcticdem_mosaic.zarr", "elevation_arcticdem_mosaic")]:
-        ds = _open(staged, name)
-        if ds is not None:
-            layers[key] = match(_crs(ds)["elevation"], tmpl)
-    rel = _open(staged, "usgs_release.zarr", "dem_post")
-    if rel is not None:
-        layers["elevation_post_setsm"] = match(_crs(rel)["elevation"], tmpl)
-        if "elevation_arcticdem_mosaic" in layers:
-            dh = layers["elevation_post_setsm"] - layers["elevation_arcticdem_mosaic"]
-            dh.attrs["caveat"] = "not co-registered; vertical references may differ"
-            layers["dh_post_minus_mosaic"] = dh
+    for group, key in [("rasters/topography/copdem", "elevation_copdem"),
+                       ("rasters/topography/arcticdem_mosaic", "elevation_arcticdem_mosaic"),
+                       ("rasters/topography/setsm_post_event", "elevation_post_setsm")]:
+        if have(group):
+            layers[key] = match(store.raster(group)["elevation"], tmpl)
+    if {"elevation_post_setsm", "elevation_arcticdem_mosaic"} <= set(layers):
+        dh = layers["elevation_post_setsm"] - layers["elevation_arcticdem_mosaic"]
+        layers["dh_post_minus_mosaic"] = dh.assign_attrs(caveat="not co-registered; vertical references may differ")
 
     # SAR before/after
-    sar = _open(staged, "sar_s1_rtc.zarr")
-    if sar is not None:
-        pp = pre_post(_crs(sar)[["vv", "vh"]], t_event)
+    if have("rasters/sar/sentinel1_rtc"):
+        pp = pre_post(store.raster("rasters/sar/sentinel1_rtc")[["vv", "vh"]], t_event)
         if pp is not None:
             for v in ("vv", "vh"):
                 layers[f"s1_{v}"] = match(pp[v], tmpl)
-            layers["s1_vv_log_ratio_db"] = 10 * np.log10(layers["s1_vv"].sel(epoch="after") / layers["s1_vv"].sel(epoch="before"))
-            layers["s1_time"] = pp.time
+            layers["s1_vv_log_ratio_db"] = 10 * np.log10(
+                layers["s1_vv"].sel(epoch="after") / layers["s1_vv"].sel(epoch="before"))
+            coords["s1_time"] = ("epoch", pp.time.values)
 
     # Sentinel-2 before/after, best clear-sky scene
-    s2 = _open(staged, "optical_s2.zarr")
-    if s2 is not None:
-        s2 = _crs(s2)
+    if have("rasters/optical/sentinel2"):
+        s2 = store.raster("rasters/optical/sentinel2")
         clear = s2["scl"].isin(CLEAR_SCL).mean(("x", "y")).compute()
         pp = pre_post(s2, t_event, score=clear)
         if pp is not None:
             for b in ("blue", "green", "red", "nir", "swir16"):
                 layers[f"s2_{b}"] = match(pp[b], tmpl)
             layers["s2_ndsi"] = (layers["s2_green"] - layers["s2_swir16"]) / (layers["s2_green"] + layers["s2_swir16"])
-            layers["s2_time"] = pp.time
+            coords["s2_time"] = ("epoch", pp.time.values)
 
-    # glacier velocity + glacier mask
-    gl = _open(staged, "glacier.zarr", "itslive_velocity")
-    if gl is not None:
-        layers["itslive_v"] = match(_crs(gl)["v"], tmpl)
-    rgi_path = staged / "glacier_rgi.geojson"
-    if rgi_path.exists():
-        rgi = gpd.read_file(rgi_path).to_crs(common.utm_crs())
-        layers["glacier_mask"] = _burn(rgi.geometry, tmpl, 1).astype("uint8")
+    # glacier velocity and mask
+    if have("rasters/glacier/itslive_velocity"):
+        layers["itslive_v"] = match(store.raster("rasters/glacier/itslive_velocity")["v"], tmpl)
+    if have("vectors/glacier/rgi"):
+        layers["glacier_mask"] = _burn(store.vectors("vectors/glacier/rgi").geometry, tmpl).assign_attrs(
+            flag_values=[0, 1], flag_meanings="no_glacier glacier")
 
-    # landslide outlines (1 = total footprint, 2 = source)
-    ol = staged / "release_outlines.geojson"
-    if ol.exists():
-        g = gpd.read_file(ol).to_crs(common.utm_crs())
-        m = _burn(g[g["name"] == "total"].geometry, tmpl, 1) + _burn(g[g["name"] == "source"].geometry, tmpl, 1)
-        layers["landslide_mask"] = m.astype("uint8").assign_attrs(flag_values=[0, 1, 2],
-                                                                  flag_meanings="outside total_footprint source")
+    # landslide outlines (published): 1 = source + deposit, 2 = source
+    if have("vectors/landslide_outlines"):
+        g = store.vectors("vectors/landslide_outlines")
+        m = _burn(g[g["name"] == "total"].geometry, tmpl) + _burn(g[g["name"] == "source"].geometry, tmpl)
+        layers["landslide_mask"] = m.astype("uint8").assign_attrs(
+            flag_values=[0, 1, 2], flag_meanings="outside total_footprint source")
 
-    # SHALTOP maxima
-    sh = _open(staged, "usgs_release.zarr", "shaltop")
-    if sh is not None:
-        sh = _crs(sh)
+    # SHALTOP maxima (published run)
+    if have("model/shaltop"):
+        sh = store.raster("model/shaltop")
         layers["shaltop_max_thickness"] = match(sh["vertical_thickness"].max("sim_time"), tmpl)
-        layers["shaltop_max_speed"] = match(sh["flow_speed"].max("sim_time"), tmpl)
+        speed = sh["flow_speed"].where(sh["vertical_thickness"] >= 1.0)
+        layers["shaltop_max_speed"] = match(speed.max("sim_time"), tmpl).assign_attrs(
+            note="cells thinner than 1 m masked (spurious margin speeds)")
 
     # geology units
-    geo = staged / "geology_AKStategeol_poly.geojson"
-    if geo.exists():
-        g = gpd.read_file(geo).to_crs(common.utm_crs())
+    if have("vectors/geology/units"):
+        g = store.vectors("vectors/geology/units")
         field = next(f for f in ("STATE_LABEL", "STATE_UNIT", "UNIT_NAME", "LABEL") if f in g.columns)
         labels = sorted(g[field].astype(str).unique())
         code = {lab: i + 1 for i, lab in enumerate(labels)}
-        shapes = [(geom, code[str(v)]) for geom, v in zip(g.geometry, g[field])]
-        arr = rasterize(shapes, out_shape=tmpl.shape, transform=tmpl.rio.transform(), fill=0, dtype="int32")
-        layers["geology_unit"] = tmpl.copy(data=arr).astype("int32").assign_attrs(
+        arr = rasterize([(geom, code[str(v)]) for geom, v in zip(g.geometry, g[field], strict=True)],
+                        out_shape=tmpl.shape, transform=tmpl.rio.transform(), fill=0, dtype="int32")
+        layers["geology_unit"] = tmpl.copy(data=arr).assign_attrs(
             flag_values=list(code.values()), flag_meanings=" ".join(s.replace(" ", "_") for s in labels),
             source_field=field, source="USGS SIM 3340")
 
     # soil (keeps depth)
-    soil = _open(staged, "soil.zarr")
-    if soil is not None:
-        soil = _crs(soil)
+    if have("rasters/soil/soilgrids"):
+        soil = store.raster("rasters/soil/soilgrids")
         for v in ("clay", "sand", "silt", "bdod", "cfvo", "soc"):
             if v in soil:
                 layers[f"soil_{v}"] = match(soil[v], tmpl, Resampling.nearest)
 
-    ds = xr.Dataset({k: v.drop_vars("spatial_ref", errors="ignore") for k, v in layers.items()
-                     if k not in ("s1_time", "s2_time")})
-    for k in ("s1_time", "s2_time"):
-        if k in layers:
-            ds = ds.assign_coords({k: ("epoch", layers[k].values)})
-    ds = ds.rio.write_crs(common.utm_crs())
-    ds.attrs = common.provenance(grid=f"{common.utm_crs()} {res} m, aoi/peters_dome_local.geojson")
+    # acquisition times live in s1_time / s2_time; drop each layer's own time coord
+    ds = xr.Dataset({k: v.drop_vars(["spatial_ref", "time"], errors="ignore") for k, v in layers.items()})
+    ds = ds.assign_coords(coords).rio.write_crs(common.utm_crs())
+    ds.attrs = common.provenance(grid=f"{common.utm_crs()} {res} m, aoi/peters_dome_local.geojson",
+                                 built_by="scripts/build_datacube.py")
     return ds
-
-
-def _burn(geoms, tmpl, value):
-    geoms = [g for g in geoms if g is not None and not g.is_empty]
-    if not geoms:
-        return tmpl.copy(data=np.zeros(tmpl.shape, "uint8"))
-    arr = rasterize([(g, value) for g in geoms], out_shape=tmpl.shape,
-                    transform=tmpl.rio.transform(), fill=0, dtype="uint8")
-    return tmpl.copy(data=arr)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--staged", default="data/staged")
-    ap.add_argument("--output", default="data/peters_dome_datacube.zarr")
+    ap.add_argument("--store", default=common.STORE)
+    ap.add_argument("--group", default="datacube")
     ap.add_argument("--resolution", type=float, default=10.0)
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args()
-    if a.overwrite and not a.output.startswith("s3://"):
-        shutil.rmtree(a.output, ignore_errors=True)
-    common.check_s3_env(a.output)
-    ds = build(Path(a.staged), a.resolution)
-    print(ds)
-    common.save_zarr(ds, a.output)
+    logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+    common.check_group(a.store, a.group, a.overwrite)
+    ds = build(Store(a.store), a.resolution)
+    log.info("datacube variables: %s", list(ds.data_vars))
+    common.write_group(ds, a.store, a.group, a.overwrite)
 
 
 if __name__ == "__main__":
