@@ -73,7 +73,10 @@ def haversine_km(lat1, lon1, lat2, lon2):
 # ---- the single store ------------------------------------------------------------------
 
 def _group_path(store: str, group: str) -> str:
-    return f"{store.rstrip('/')}/{group.strip('/')}"
+    """Path of a group inside the store; the root group ("") is the store itself
+    (no trailing slash, so S3 keys never get a double slash)."""
+    store, group = store.rstrip("/"), group.strip("/")
+    return f"{store}/{group}" if group else store
 
 
 def group_exists(store: str, group: str) -> bool:

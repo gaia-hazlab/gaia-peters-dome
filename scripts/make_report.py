@@ -217,10 +217,12 @@ def fig_i53(staged, out):
     ax.set_xlim(tmin, tmax)
     ax.set_yticks([])
     ax.set_xlabel(f"time after {str(T0)[:19]} UTC (s)")
-    ax.set_title(f"IMS array I53US, 8 elements at {dist:.0f} km, 0.5–5 Hz (Pa, offset)")
+    n = da.sizes["geometry"]
+    ax.set_title(f"IMS array I53US, {n} element{'s' if n != 1 else ''} at {dist:.0f} km, 0.5–5 Hz (Pa, offset)")
     fig.tight_layout()
     fig.savefig(out)
     plt.close(fig)
+    return n
 
 
 def fig_force(staged, out):
@@ -410,7 +412,7 @@ FIGS = [
     ("map", fig_map, "Stations", "Seismic stations within 250 km (HH/BH, response removed) and infrasound sensors within 400 km (BDF/HDF, sensitivity removed), from the EarthScope FDSN service. Rings every 100 km around the ComCat location. Store: <code>stations/seismic</code>, <code>stations/infrasound</code>."),
     ("seismic", fig_seismic, "Seismic record section", "Vertical velocity at {result} stations on the common 20 Hz grid, zero-phase Butterworth filtered and each trace normalized; traces thinned to a minimum distance spacing so they do not overprint. Orange line: ComCat landslide origin ({t0}). The ComCat precursor ({tpre}) is 475 s earlier, outside this window."),
     ("infrasound", fig_infrasound, "Infrasound record section", "Pressure from {result} sensors, 0.5–5 Hz, each trace normalized; thinned to a minimum distance spacing, so each array shows one element. Orange lines: arrival times for constant celerities from the ComCat origin. Dotted vertical line: ComCat precursor time."),
-    ("i53", fig_i53, "I53US array", "The eight elements of IMS array I53US (Fairbanks), ~252 km from the source, 0.5–5 Hz. The main pulse arrives about 870 s after the ComCat origin, an apparent celerity of ~0.29 km/s. Shifting the ComCat precursor time by the same travel time (dashed) lands on the arrival near 400 s; the arrival near 720 s has no ComCat entry. This is consistent with the two precursory events the paper reports, but here it is a visual alignment only: no array processing (back azimuth, trace velocity) has been run on these data."),
+    ("i53", fig_i53, "I53US array", "The elements of IMS array I53US (Fairbanks) present in the store ({result} in this build), ~252 km from the source, 0.5–5 Hz. The main pulse arrives about 870 s after the ComCat origin, an apparent celerity of ~0.29 km/s. Shifting the ComCat precursor time by the same travel time (dashed) lands on the arrival near 400 s; the arrival near 720 s has no ComCat entry. This is consistent with the two precursory events the paper reports, but here it is a visual alignment only: no array processing (back azimuth, trace velocity) has been run on these data."),
     ("force", fig_force, "Force-time function (published)", "Published result, not recomputed here: the force exerted by the landslide on the Earth as inverted by Toney et al. (2026) from 15–200 s displacement seismograms, plotted unmodified from the USGS data release (file <code>peters_dome_15-200_s_jackknife.csv</code>). No force inversion has been run on the seismograms staged in this container. Shaded band: jackknife lower/upper bounds. Zero time 2023-09-14 02:06:27 UTC (release metadata)."),
     ("sar", fig_sar, "Sentinel-1 before / after", "Radiometrically terrain-corrected γ⁰ VV from Planetary Computer <code>sentinel-1-rtc</code>, last scene before and first after the event (12-day repeat, Sentinel-1A only in 2023). Outlines from the USGS release: solid = source + deposit, dashed = source."),
     ("optical", fig_optical, "Sentinel-2 before / after", "Sentinel-2 L2A true colour (Earth Search, collection 1), clearest scene on each side of the event by SCL clear-sky fraction (snow counts as clear); gamma 1.6 for display. Same outlines as above. The post-event scene is under fresh snow, so the deposit is not resolvable in true colour here; the Sentinel-1 change map above shows it."),

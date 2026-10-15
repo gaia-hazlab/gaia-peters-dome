@@ -82,3 +82,13 @@ def test_single_store_groups(tmp_path):
     common.write_group(ras * 2, store, "rasters/test", overwrite=True)
     assert float(common.open_group(store, "rasters/test").v.max()) == 2.0
     assert "/stations/test" in common.gio.open_datatree(store).groups  # sibling survives overwrite
+
+
+def test_s3_group_keys(monkeypatch):
+    """Root-group key on S3 must be <store>/zarr.json, never <store>//zarr.json."""
+    seen = []
+    monkeypatch.setattr(common.gio, "output_exists", lambda path: seen.append(path) or False)
+    for store in ("s3://bucket/peters_dome.zarr", "s3://bucket/peters_dome.zarr/"):
+        common.group_exists(store, "")
+        common.group_exists(store, "/rasters/sar/")
+    assert seen == ["s3://bucket/peters_dome.zarr/zarr.json", "s3://bucket/peters_dome.zarr/rasters/sar/zarr.json"] * 2
