@@ -59,6 +59,7 @@ Each file holds one polygon (gaia-cli uses the first geometry), CRS84.
 |---|---|---|---|---|
 | `seismic` | `stations/seismic` | FDSN, EarthScope DMC; HH?/BH? within 250 km | velocity m/s, (geometry, component, time), 20 Hz common time grid | 01:50–02:30 UTC |
 | `seismic --units DISP --sampling-rate 1 -g stations/seismic_lp` | `stations/seismic_lp` | BH? within 400 km | displacement m, 1 Hz | same |
+| `seismic-continuous` | `stations/seismic_continuous` | FDSN, EarthScope DMC; BH? at AK.KTH, AK.CAST, AK.PPLA (47-58 km) | velocity m/s, float32, (geometry, component, time), 20 Hz, 1-h time chunks; written one UTC day at a time (`--dry-run` prints the size, `--resume` fills missing days) | 2023-08-01 → 09-14 02:10 UTC |
 | `infrasound` | `stations/infrasound` | BDF/HDF within 400 km (AK, AV arrays, IMS I53US at ~252 km) | pressure Pa, (geometry, time), 20 Hz | 01:50–03:00 UTC |
 | `sar` | `rasters/sar/sentinel1_rtc` | Sentinel-1 RTC, Planetary Computer | γ⁰ VV/VH linear, EPSG:32605 10 m, orbit metadata per time | 2023-08-01 → 10-31 |
 | `optical --sensor sentinel2` | `rasters/optical/sentinel2` | S2 L2A C1, Earth Search | reflectance 0–1 + SCL, EPSG:32605 10 m | same |
@@ -95,7 +96,7 @@ resume). `STORE=s3://bucket/peters_dome.zarr pixi run stage-all` writes to S3 or
 
 ```
 /                       event metadata (attrs)
-stations/  seismic, seismic_lp, infrasound, synoptic
+stations/  seismic, seismic_lp, seismic_continuous, infrasound, synoptic
 rasters/   sar/sentinel1_rtc  optical/{sentinel2,landsat}
            topography/{copdem,arcticdem_mosaic,arcticdem_strips,setsm_post_event}
            glacier/itslive_velocity  soil/soilgrids  met/{era5,era5_land}

@@ -11,7 +11,7 @@ from .context import stage_geology, stage_glacier, stage_soil
 from .imagery import stage_dem, stage_optical, stage_sar
 from .met import stage_era5, stage_profile, stage_synoptic
 from .release import stage_release
-from .waveforms import stage_infrasound, stage_seismic
+from .waveforms import stage_infrasound, stage_seismic, stage_seismic_continuous
 
 app = cyclopts.App(help="Peters Dome (Denali, 2023-09-14) landslide data container.")
 stage_app = cyclopts.App(name="stage", help="Stage one dataset into its group of the container store.")
@@ -19,6 +19,7 @@ app.command(stage_app)
 
 for fn, name in [
     (stage_seismic, "seismic"),
+    (stage_seismic_continuous, "seismic-continuous"),
     (stage_infrasound, "infrasound"),
     (stage_sar, "sar"),
     (stage_optical, "optical"),

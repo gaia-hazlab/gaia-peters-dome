@@ -58,7 +58,7 @@ report = "python scripts/make_report.py"
 check = "python scripts/check_store.py"
 test = "pytest -q"
 test-online = "pytest -q -m online"
-lint = "ruff check src scripts tests"
+lint = "ruff check src scripts tests analysis"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/peters_dome"]
