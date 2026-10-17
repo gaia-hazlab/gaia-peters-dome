@@ -112,9 +112,14 @@ def _init_root(store: str):
     root.to_zarr(gio._zarr_store_for_path(store), mode="w-", zarr_format=3, consolidated=False)
 
 
-def write_group(ds: xr.Dataset | xr.DataArray, store: str, group: str, overwrite: bool = False):
+def write_group(ds: xr.Dataset | xr.DataArray, store: str, group: str, overwrite: bool = False,
+                compute: bool = True):
     """Write one dataset as a group of the store, using gaia-cli's Zarr preparation
-    (string re-encoding, grid_mapping attrs, single-chunk small datasets)."""
+    (string re-encoding, grid_mapping attrs, single-chunk small datasets).
+
+    ``compute=False`` writes metadata and in-memory coordinates only and leaves the dask
+    variables unwritten (they read back as NaN), so large groups can be filled later with
+    region writes (``write_region``)."""
     if isinstance(ds, xr.DataArray):
         ds = ds.to_dataset(name=ds.name or "data")
     if "spatial_ref" in ds.data_vars:  # keep the grid mapping a coordinate (gaia align needs it)
@@ -130,7 +135,14 @@ def write_group(ds: xr.Dataset | xr.DataArray, store: str, group: str, overwrite
         consolidated=False,
         write_empty_chunks=True,
         encoding=encoding,
+        compute=compute,
     )
+
+
+def write_region(ds: xr.Dataset, store: str, group: str, region: dict):
+    """Fill one slab of an existing group (variables only, no coordinates)."""
+    ds.to_zarr(gio._zarr_store_for_path(store), group=group, region=region,
+               zarr_format=3, consolidated=False)
 
 
 def stations_to_dataset(da: xr.DataArray) -> xr.Dataset:

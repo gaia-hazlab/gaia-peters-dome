@@ -22,6 +22,8 @@ pd seismic    -i $WAVE -s 2023-09-14T01:50:00 -e 2023-09-14T02:30:00 --max-dista
 pd seismic    -i $WAVE -s 2023-09-14T01:50:00 -e 2023-09-14T02:30:00 --max-distance-km 400 \
               --channels 'BH?' --sampling-rate 1 --units DISP --group stations/seismic_lp
 pd infrasound -i $WAVE -s 2023-09-14T01:50:00 -e 2023-09-14T03:00:00
+# continuous weeks at the 3 nearest stations (~2.6 GB download, ~1 h); used by analysis/precursors/
+pd seismic-continuous -i $WAVE -s 2023-08-01T00:00:00 -e 2023-09-14T02:10:00
 
 # --- remote sensing and published results -------------------------------------------
 pd sar     -i $LOCAL -s 2023-08-01 -e 2023-10-31

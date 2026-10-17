@@ -119,6 +119,27 @@ def _bulk(client, nslc: list[tuple[str, str, str, str]], t0, t1, chunk: int = 50
     return out
 
 
+def _grid_station(allst, inv, net, sta, loc, band, group, t0, npts, fs, output, pre_filt) -> dict:
+    """One station's channels: merge, demean, remove response, grid. {component: array}."""
+    st = allst.select(network=net.code, station=sta.code, location=loc, channel=band + "?").copy()
+    if not len(st):
+        log.info(f"skip {net.code}.{sta.code}: no data")
+        return {}
+    st = st.merge(method=1, fill_value=None).split()
+    st.detrend("demean")
+    try:
+        st.remove_response(inventory=inv, output=output, pre_filt=pre_filt, water_level=None)
+    except (ValueError, ObsPyException) as e:
+        log.info(f"skip {net.code}.{sta.code}: response {e}")
+        return {}
+    comps = {}
+    for cha in group:
+        sub = st.select(channel=cha.code)
+        if len(sub):
+            comps[_component(cha)] = _to_grid(sub, t0, npts, fs)
+    return comps
+
+
 def load_seismic(
     aoi: gpd.GeoDataFrame,
     start_date: str,
@@ -142,22 +163,7 @@ def load_seismic(
     allst = _bulk(client, [(n.code, s.code, loc, band + "?") for n, s, loc, band, _ in picks], t0 - 120, t1 + 120)
     arrays = []
     for net, sta, loc, band, group in picks:
-        st = allst.select(network=net.code, station=sta.code, location=loc, channel=band + "?").copy()
-        if not len(st):
-            log.info(f"skip {net.code}.{sta.code}: no data")
-            continue
-        st = st.merge(method=1, fill_value=None).split()
-        st.detrend("demean")
-        try:
-            st.remove_response(inventory=inv, output=output, pre_filt=pre_filt, water_level=None)
-        except (ValueError, ObsPyException) as e:
-            log.info(f"skip {net.code}.{sta.code}: response {e}")
-            continue
-        comps = {}
-        for cha in group:
-            sub = st.select(channel=cha.code)
-            if len(sub):
-                comps[_component(cha)] = _to_grid(sub, t0, npts, sampling_rate)
+        comps = _grid_station(allst, inv, net, sta, loc, band, group, t0, npts, sampling_rate, output, pre_filt)
         if not comps:
             continue
         dist_m, _az, baz = gps2dist_azimuth(lat0, lon0, sta.latitude, sta.longitude)
@@ -182,7 +188,7 @@ def load_seismic(
         raise RuntimeError("No waveforms retrieved")
     da = xr.concat(arrays, dim="station", join="outer").reindex(component=["Z", "N", "E", "1", "2"])
     da = da.dropna("component", how="all").sortby("distance_km")
-    da.name = "velocity" if output == "VEL" else output.lower()
+    da.name = _var_name(output)
     da.attrs = common.provenance(
         units={"VEL": "m/s", "DISP": "m", "ACC": "m/s**2"}[output],
         sampling_rate_hz=sampling_rate, fdsn=fdsn_url, pre_filt=pre_filt,
@@ -294,3 +300,123 @@ def stage_infrasound(
         return
     da = load_infrasound(common.load_aoi(vectorPath), start_date, end_date, channels, sampling_rate)
     common.write_group(common.stations_to_dataset(da), output_path, group, overwrite)
+
+
+# ---- continuous waveforms (weeks), written day by day -----------------------------------
+
+CONTINUOUS_STATIONS = "AK.KTH,AK.CAST,AK.PPLA"   # nearest three broadbands, 47-58 km
+
+
+def _var_name(units: str) -> str:
+    """Data-variable name for a response-removal output: velocity, disp or acc."""
+    return "velocity" if units == "VEL" else units.lower()
+
+
+def _continuous_skeleton(picks, t0, npts, fs, chunk, name="velocity") -> xr.Dataset:
+    """Lazy all-NaN (station, component, time) float32 array with the station coordinates,
+    for a compute=False write; days are filled afterwards with region writes."""
+    import dask.array as dsa
+
+    lat0, lon0 = _event_center()
+    time = pd.date_range(t0.datetime, periods=npts, freq=pd.Timedelta(seconds=1 / fs))
+    comps = ["Z", "N", "E"]
+    rows = [gps2dist_azimuth(lat0, lon0, s.latitude, s.longitude) for _, s, *_ in picks]
+    da = xr.DataArray(
+        dsa.full((len(picks), len(comps), npts), np.nan, dtype="float32", chunks=(len(picks), len(comps), chunk)),
+        dims=("station", "component", "time"),
+        coords={
+            "station": [f"{n.code}.{s.code}" for n, s, *_ in picks],
+            "component": comps,
+            "time": time,
+            "network": ("station", [n.code for n, *_ in picks]),
+            "location": ("station", [p[2] for p in picks]),
+            "channel": ("station", [p[3] + "?" for p in picks]),
+            "elevation": ("station", [s.elevation for _, s, *_ in picks]),
+            "distance_km": ("station", [r[0] / 1e3 for r in rows]),
+            "back_azimuth_deg": ("station", [r[2] for r in rows]),
+            "geometry": ("station", [Point(s.longitude, s.latitude) for _, s, *_ in picks]),
+        },
+        name=name,
+    )
+    return da
+
+
+def stage_seismic_continuous(
+    vectorPath: Input = "aoi/peters_dome_waveforms.geojson",
+    start_date: Start = "2023-08-01T00:00:00",
+    end_date: End = "2023-09-14T02:10:00",
+    output_path: Output = STORE,
+    group: Group = "stations/seismic_continuous",
+    stations: Annotated[str, Parameter(name=["--stations"])] = CONTINUOUS_STATIONS,
+    channels: Annotated[str, Parameter(name=["--channels"])] = "BH?",
+    sampling_rate: Annotated[float, Parameter(name=["--sampling-rate"])] = 20.0,
+    units: Annotated[str, Parameter(name=["--units"])] = "VEL",
+    chunk_seconds: Annotated[int, Parameter(name=["--chunk-seconds"])] = 3600,
+    dry_run: Annotated[bool, Parameter(name=["--dry-run"], negative="")] = False,
+    resume: Annotated[bool, Parameter(name=["--resume"], negative="")] = False,
+    overwrite: Overwrite = False,
+    skip_existing: SkipExisting = False,
+):
+    """Stage CONTINUOUS seismic waveforms (response removed, float32; velocity unless --units) for a few stations over
+    weeks. Downloads and writes one UTC day at a time into a time-chunked group, so memory
+    stays at one day. --dry-run prints the size estimate only; --resume fills only the days
+    that are still all-NaN in an existing group."""
+    client = Client(base_url=FDSN_URL)
+    t0, t1 = UTCDateTime(start_date), UTCDateTime(end_date)
+    want = set(stations.split(","))
+    inv = find_stations(common.load_aoi(vectorPath), start_date, end_date, channels, client)
+    lat0, lon0 = _event_center()
+    picks = sorted((p for p in _pick_channels(inv, channels) if f"{p[0].code}.{p[1].code}" in want),
+                   key=lambda p: common.haversine_km(lat0, lon0, p[1].latitude, p[1].longitude))
+    if missing := want - {f"{p[0].code}.{p[1].code}" for p in picks}:
+        log.warning(f"no {channels} metadata for {sorted(missing)}")
+    npts = round((t1 - t0) * sampling_rate)
+    chunk = round(chunk_seconds * sampling_rate)
+    nchan = sum(len(p[4]) for p in picks)
+    raw_fs = max(c.sample_rate for p in picks for c in p[4])
+    # Steim2 MiniSEED of broadband noise is ~1.5 bytes/sample (approximate, for planning)
+    log.info(f"{len(picks)} stations, {nchan} channels, {(t1 - t0) / 86400:.1f} days; "
+             f"download ~{nchan * raw_fs * (t1 - t0) * 1.5 / 1e9:.1f} GB MiniSEED at {raw_fs:g} Hz; "
+             f"store {len(picks) * 3 * npts * 4 / 1e9:.2f} GB float32 before compression, "
+             f"time chunk {chunk_seconds} s")
+    if dry_run:
+        return
+
+    if resume and common.group_exists(output_path, group):
+        done = common.open_group(output_path, group)[_var_name(units)]
+    else:
+        if not common.check_group(output_path, group, overwrite, skip_existing):
+            return
+        da = _continuous_skeleton(picks, t0, npts, sampling_rate, chunk, _var_name(units))
+        pre_filt = (0.004, 0.005, 0.4 * sampling_rate, 0.45 * sampling_rate)
+        da.attrs = common.provenance(
+            units={"VEL": "m/s", "DISP": "m", "ACC": "m/s**2"}[units], sampling_rate_hz=sampling_rate,
+            fdsn=FDSN_URL, pre_filt=pre_filt, dtype="float32",
+            processing="per UTC day (+-120 s margin): merge, demean, remove_response, lowpass 0.4*fs, "
+                       "linear interp to common grid; gaps and missing days are NaN",
+        )
+        common.write_group(common.stations_to_dataset(da), output_path, group, overwrite, compute=False)
+        done = None
+
+    pre_filt = (0.004, 0.005, 0.4 * sampling_rate, 0.45 * sampling_rate)
+    nslc = [(n.code, s.code, loc, band + "?") for n, s, loc, band, _ in picks]
+    day = round(86400 * sampling_rate)
+    for i0 in range(0, npts, day):
+        i1 = min(i0 + day, npts)
+        d0 = t0 + i0 / sampling_rate
+        if done is not None and np.isfinite(done.isel(time=slice(i0, i1)).values).any():
+            continue
+        for attempt in range(3):  # an empty day is usually a timeout; retry before writing NaN
+            allst = _bulk(client, nslc, d0 - 120, d0 + (i1 - i0) / sampling_rate + 120)
+            if len(allst):
+                break
+            log.info(f"{d0.date}: no data returned (attempt {attempt + 1}/3)")
+        arr = np.full((len(picks), 3, i1 - i0), np.nan, dtype="float32")
+        for k, (net, sta, loc, band, grp) in enumerate(picks):
+            comps = _grid_station(allst, inv, net, sta, loc, band, grp, d0, i1 - i0, sampling_rate, units, pre_filt)
+            for j, c in enumerate("ZNE"):
+                if c in comps:
+                    arr[k, j] = comps[c]
+        common.write_region(xr.Dataset({_var_name(units): (("geometry", "component", "time"), arr)}),
+                            output_path, group, {"time": slice(i0, i1)})
+        log.info(f"{d0.date} written, finite fraction {np.isfinite(arr).mean():.3f}")
