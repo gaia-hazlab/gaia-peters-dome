@@ -103,7 +103,7 @@ def test_continuous_skeleton_region_writes(tmp_path):
     picks = [(net, NS(code=c, latitude=63.5, longitude=-151.0 + k, elevation=1000.0), "", "BH", [])
              for k, c in enumerate(["KTH", "CAST"])]
     t0 = UTCDateTime("2023-08-01")
-    da = waveforms._continuous_skeleton(None, picks, t0, npts=40, fs=fs, chunk=10)
+    da = waveforms._continuous_skeleton(picks, t0, npts=40, fs=fs, chunk=10)
     common.write_group(common.stations_to_dataset(da), store, group, compute=False)
     assert np.isnan(common.open_group(store, group).velocity.values).all()
     slab = np.arange(2 * 3 * 10, dtype="float32").reshape(2, 3, 10)
@@ -113,3 +113,14 @@ def test_continuous_skeleton_region_writes(tmp_path):
     v = back.velocity.values
     assert np.array_equal(v[:, :, 10:20], slab) and np.isnan(v[:, :, :10]).all() and np.isnan(v[:, :, 20:]).all()
     assert list(back.station.values) == ["AK.KTH", "AK.CAST"] and back.time.size == 40
+
+
+@pytest.mark.parametrize(("units", "name"), [("VEL", "velocity"), ("DISP", "disp"), ("ACC", "acc")])
+def test_continuous_variable_name_follows_units(units, name):
+    """--units must not store displacement or acceleration under the name 'velocity'."""
+    from types import SimpleNamespace as NS
+
+    picks = [(NS(code="AK"), NS(code="KTH", latitude=63.5, longitude=-151.0, elevation=1000.0), "", "BH", [])]
+    da = waveforms._continuous_skeleton(picks, UTCDateTime("2023-08-01"), npts=4, fs=1.0, chunk=4,
+                                        name=waveforms._var_name(units))
+    assert da.name == name

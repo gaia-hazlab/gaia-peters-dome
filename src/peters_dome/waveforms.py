@@ -188,7 +188,7 @@ def load_seismic(
         raise RuntimeError("No waveforms retrieved")
     da = xr.concat(arrays, dim="station", join="outer").reindex(component=["Z", "N", "E", "1", "2"])
     da = da.dropna("component", how="all").sortby("distance_km")
-    da.name = "velocity" if output == "VEL" else output.lower()
+    da.name = _var_name(output)
     da.attrs = common.provenance(
         units={"VEL": "m/s", "DISP": "m", "ACC": "m/s**2"}[output],
         sampling_rate_hz=sampling_rate, fdsn=fdsn_url, pre_filt=pre_filt,
@@ -307,7 +307,12 @@ def stage_infrasound(
 CONTINUOUS_STATIONS = "AK.KTH,AK.CAST,AK.PPLA"   # nearest three broadbands, 47-58 km
 
 
-def _continuous_skeleton(inv, picks, t0, npts, fs, chunk) -> xr.Dataset:
+def _var_name(units: str) -> str:
+    """Data-variable name for a response-removal output: velocity, disp or acc."""
+    return "velocity" if units == "VEL" else units.lower()
+
+
+def _continuous_skeleton(picks, t0, npts, fs, chunk, name="velocity") -> xr.Dataset:
     """Lazy all-NaN (station, component, time) float32 array with the station coordinates,
     for a compute=False write; days are filled afterwards with region writes."""
     import dask.array as dsa
@@ -331,7 +336,7 @@ def _continuous_skeleton(inv, picks, t0, npts, fs, chunk) -> xr.Dataset:
             "back_azimuth_deg": ("station", [r[2] for r in rows]),
             "geometry": ("station", [Point(s.longitude, s.latitude) for _, s, *_ in picks]),
         },
-        name="velocity",
+        name=name,
     )
     return da
 
@@ -352,7 +357,7 @@ def stage_seismic_continuous(
     overwrite: Overwrite = False,
     skip_existing: SkipExisting = False,
 ):
-    """Stage CONTINUOUS seismic velocity (response removed, float32) for a few stations over
+    """Stage CONTINUOUS seismic waveforms (response removed, float32; velocity unless --units) for a few stations over
     weeks. Downloads and writes one UTC day at a time into a time-chunked group, so memory
     stays at one day. --dry-run prints the size estimate only; --resume fills only the days
     that are still all-NaN in an existing group."""
@@ -378,11 +383,11 @@ def stage_seismic_continuous(
         return
 
     if resume and common.group_exists(output_path, group):
-        done = common.open_group(output_path, group).velocity
+        done = common.open_group(output_path, group)[_var_name(units)]
     else:
         if not common.check_group(output_path, group, overwrite, skip_existing):
             return
-        da = _continuous_skeleton(inv, picks, t0, npts, sampling_rate, chunk)
+        da = _continuous_skeleton(picks, t0, npts, sampling_rate, chunk, _var_name(units))
         pre_filt = (0.004, 0.005, 0.4 * sampling_rate, 0.45 * sampling_rate)
         da.attrs = common.provenance(
             units={"VEL": "m/s", "DISP": "m", "ACC": "m/s**2"}[units], sampling_rate_hz=sampling_rate,
@@ -412,6 +417,6 @@ def stage_seismic_continuous(
             for j, c in enumerate("ZNE"):
                 if c in comps:
                     arr[k, j] = comps[c]
-        common.write_region(xr.Dataset({"velocity": (("geometry", "component", "time"), arr)}),
+        common.write_region(xr.Dataset({_var_name(units): (("geometry", "component", "time"), arr)}),
                             output_path, group, {"time": slice(i0, i1)})
         log.info(f"{d0.date} written, finite fraction {np.isfinite(arr).mean():.3f}")
