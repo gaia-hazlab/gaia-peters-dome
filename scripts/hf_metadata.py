@@ -50,6 +50,19 @@ CONTEXT = {
 }
 
 
+# Everything the card, Croissant record and manifest are generated from; an uncommitted
+# change to any of these marks the build "-dirty", which hf_publish.py refuses.
+BUILD_INPUTS = ("src", "scripts", "config", "pyproject.toml", "pixi.lock")
+
+
+def gaia_cli_rev() -> str:
+    """The gaia-cli commit pinned in pyproject.toml, so the card cannot drift from the pin."""
+    import tomllib
+
+    dep = tomllib.loads((common.ROOT / "pyproject.toml").read_text())["tool"]["pixi"]["pypi-dependencies"]["gaia-cli"]
+    return dep["rev"]
+
+
 def _git(*args: str) -> str:
     return subprocess.run(["git", *args], check=False, capture_output=True, text=True, cwd=common.ROOT).stdout.strip()
 
@@ -347,8 +360,8 @@ def main():
     url = f"https://huggingface.co/datasets/{cfg['hf_repo']}"
     names = ", ".join(c["name"] for c in cfg["creators"])
     prov = {
-        "commit": _git("rev-parse", "--short", "HEAD") + ("-dirty" if _git("status", "--porcelain", "--", "src", "scripts") else ""),
-        "gaia_cli": "896b628",
+        "commit": _git("rev-parse", "--short", "HEAD") + ("-dirty" if _git("status", "--porcelain", "--", *BUILD_INPUTS) else ""),
+        "gaia_cli": gaia_cli_rev(),
         "date": dt.date.today().isoformat(),
         "cite_as": f"{names} ({dt.date.today().year}). {cfg['pretty_name']} ({cfg['version']}). "
                    f"GAIA HazLab, Hugging Face. {url}",

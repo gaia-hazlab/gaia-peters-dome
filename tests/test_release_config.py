@@ -38,3 +38,19 @@ def test_longest_prefix_wins():
 def test_synoptic_is_not_publishable():
     with pytest.raises(KeyError):
         source_for("stations/synoptic", CFG["sources"])
+
+
+def test_config_edits_mark_the_build_dirty():
+    from hf_metadata import BUILD_INPUTS
+
+    assert {"config", "src", "scripts"} <= set(BUILD_INPUTS)
+
+
+def test_gaia_cli_provenance_follows_the_pin():
+    import re
+    import tomllib
+
+    from hf_metadata import gaia_cli_rev
+
+    pin = tomllib.loads((common.ROOT / "pyproject.toml").read_text())["tool"]["pixi"]["pypi-dependencies"]["gaia-cli"]
+    assert gaia_cli_rev() == pin["rev"] and re.fullmatch(r"[0-9a-f]{7,40}", gaia_cli_rev())
