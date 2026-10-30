@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["huggingface_hub>=0.34", "pyyaml"]
+# dependencies = ["huggingface_hub>=1.0,<2", "pyyaml"]  # 2.x removed upload_large_folder
 # ///
 """Publish data/peters_dome.zarr and release/ to the Hugging Face repo in config/release.yml.
 
