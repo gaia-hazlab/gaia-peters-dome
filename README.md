@@ -124,6 +124,22 @@ and their difference, ITS_LIVE speed, RGI glacier mask, landslide source/footpri
 SHALTOP maximum thickness and speed, rasterized geology units (code table in attrs), and
 SoilGrids properties with a `depth` dimension.
 
+## Hugging Face release
+
+The staged store is published as [gaia-hazlab/peters-dome](https://huggingface.co/datasets/gaia-hazlab/peters-dome),
+in the [GAIA HazLab datasets](https://huggingface.co/gaia-hazlab) collection. Sources, licences and
+attributions per group live in [config/release.yml](config/release.yml); a staged group without an
+entry there stops the release (Synoptic has none on purpose: its terms were not reviewed).
+
+```bash
+pixi run check                       # store passes the gaia-cli conventions
+pixi run release-metadata            # release/: dataset card, Croissant 1.1 + GeoCroissant, sha256 manifest
+uv run scripts/hf_publish.py         # dry run: manifest matches the store, metadata built from a clean commit
+uv run scripts/hf_publish.py --yes   # upload, tag the version, add to the collection
+```
+
+Bump `version` in `config/release.yml` for every new upload; the publish script refuses to move a tag.
+
 ## Design choices that depart from gaia-cli defaults
 
 - Groups are written one dataset at a time into the existing store (`common.write_group`,

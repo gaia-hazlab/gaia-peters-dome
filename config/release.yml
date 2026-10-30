@@ -1,0 +1,127 @@
+# Hugging Face release of data/peters_dome.zarr. Read by scripts/hf_metadata.py and
+# scripts/hf_publish.py. Every licence below was checked on 2026-10-30 against the source
+# named in `checked`; edit this file, not the generated card.
+
+hf_repo: gaia-hazlab/peters-dome
+version: v1.0
+collection_title: GAIA HazLab datasets
+license: cc-by-4.0          # overall; per-group terms below take precedence
+pretty_name: "Peters Dome 2023 ice-rock avalanche: multimodal event container"
+keywords: [landslide, ice-rock avalanche, seismology, infrasound, SAR, DEM, glacier, Alaska, Denali, zarr]
+creators:
+  - {name: Marine Denolle, affiliation: University of Washington}
+  # add Michael West (Alaska Earthquake Center) and Scott Henderson before minting a DOI
+
+# Longest matching prefix wins. `attribution` is the text the source asks users to carry.
+sources:
+  stations/seismic:
+    source: "FDSN waveforms via EarthScope DMC, networks AK, AV, AT (HH?/BH?, response removed)"
+    license: "open (FDSN); cite network DOIs"
+    attribution: "Alaska Earthquake Center, Univ. of Alaska Fairbanks (1987) Alaska Regional Network, doi:10.7914/SN/AK; Alaska Volcano Observatory/USGS (1988), doi:10.7914/SN/AV; NOAA National Tsunami Warning Center (1967), doi:10.7914/SN/AT"
+    checked: "EarthScope fdsnws/station network DOIs and restrictedStatus, 2026-10-30"
+  stations/seismic_lp:
+    source: "FDSN BH? displacement via EarthScope DMC, networks AK, AV, AT, IU, IM"
+    license: "open (FDSN); cite network DOIs"
+    attribution: "as stations/seismic, plus GSN doi:10.7914/SN/IU and IMS doi:10.7914/vefq-vh75"
+    checked: "EarthScope fdsnws/station, 2026-10-30"
+  stations/seismic_continuous:
+    source: "FDSN continuous BH? via EarthScope DMC, AK.KTH, AK.CAST, AK.PPLA (PR #4 precursor search)"
+    license: "open (FDSN); cite network DOIs"
+    attribution: "Alaska Earthquake Center, Univ. of Alaska Fairbanks (1987), doi:10.7914/SN/AK"
+    checked: "EarthScope fdsnws/station, 2026-10-30"
+  stations/infrasound:
+    source: "FDSN BDF/HDF via EarthScope DMC, networks AK, AV, IM (IMS I53US elements I53H1-H8)"
+    license: "open (FDSN); IM channels carry no restriction flag at EarthScope; IMS terms to be confirmed by M. West"
+    attribution: "doi:10.7914/SN/AK; doi:10.7914/SN/AV; International Miscellaneous Stations, doi:10.7914/vefq-vh75"
+    checked: "EarthScope fdsnws/station channel restrictedStatus for IM.I53H*, 2026-10-30"
+  rasters/sar/sentinel1_rtc:
+    source: "Sentinel-1 RTC, Microsoft Planetary Computer collection sentinel-1-rtc"
+    license: CC-BY-4.0
+    attribution: "Contains modified Copernicus Sentinel data 2023, processed by Catalyst/Microsoft Planetary Computer"
+    checked: "Planetary Computer STAC collection license field"
+  rasters/optical/sentinel2:
+    source: "Sentinel-2 L2A Collection 1, Earth Search (Element 84)"
+    license: "Copernicus Sentinel data terms (free, full and open)"
+    attribution: "Contains modified Copernicus Sentinel data 2023"
+    checked: "Earth Search STAC collection license link (Sentinel Data Legal Notice)"
+  rasters/optical/landsat:
+    source: "Landsat 8/9 Collection 2 Level-2, Microsoft Planetary Computer"
+    license: "USGS data policy (no restrictions)"
+    attribution: "Landsat Collection 2 courtesy of the U.S. Geological Survey"
+    checked: "Planetary Computer STAC collection license link (USGS data policy)"
+  rasters/topography/copdem:
+    source: "Copernicus DEM GLO-30"
+    license: "Copernicus DEM GLO-30 licence (free; redistribution allowed; pass the licence on)"
+    attribution: "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+    license_url: "https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf"
+    checked: "licence PDF via web search"
+  rasters/topography/arcticdem:
+    source: "ArcticDEM v4.1 (PGC): mosaic and s2s041 strips, read at 10 m from COG overviews"
+    license: CC-BY-4.0
+    attribution: "DEM(s) created by the Polar Geospatial Center from Maxar, Inc. imagery; NSF-OPP awards 1043681, 1559691, 1542736, 1810976, 2129685"
+    checked: "PGC acknowledgement policy"
+  rasters/topography/setsm_post_event:
+    source: "Post-event SETSM DEM from the USGS data release doi:10.5066/P13WIS6X, staged unmodified"
+    license: "US public domain (USGS)"
+    attribution: "Toney et al. (2026) USGS data release, doi:10.5066/P13WIS6X"
+    checked: "USGS release; US Government work"
+  rasters/glacier/itslive_velocity:
+    source: "ITS_LIVE v2 composite velocity"
+    license: CC0-1.0
+    attribution: "ITS_LIVE, NASA MEaSUREs (Gardner et al.)"
+    checked: "ITS_LIVE data README"
+  rasters/soil/soilgrids:
+    source: "ISRIC SoilGrids 2.0"
+    license: CC-BY-4.0
+    attribution: "Poggio et al. (2021) SOIL 7, 217-240, doi:10.5194/soil-7-217-2021"
+    checked: "ISRIC, via web search"
+  rasters/met:
+    source: "ERA5 (0.25°) and ERA5-Land (0.1°) hourly series via the Open-Meteo archive API"
+    license: CC-BY-4.0
+    attribution: "Weather data by Open-Meteo.com (CC BY 4.0); contains modified Copernicus Climate Change Service information 2023"
+    checked: "open-meteo.com/en/licence"
+  model/atmosphere_profiles:
+    source: "Open-Meteo historical-forecast API (best-match NWP), 15 pressure levels"
+    license: CC-BY-4.0
+    attribution: "Weather data by Open-Meteo.com (CC BY 4.0)"
+    checked: "open-meteo.com/en/licence"
+  model/force_published:
+    source: "Published force-time function, USGS data release doi:10.5066/P13WIS6X, staged unmodified"
+    license: "US public domain (USGS)"
+    attribution: "Toney et al. (2026) USGS data release, doi:10.5066/P13WIS6X"
+    checked: "USGS release"
+  model/shaltop:
+    source: "Published SHALTOP run 0520, USGS data release doi:10.5066/P13WIS6X, staged unmodified"
+    license: "US public domain (USGS)"
+    attribution: "Toney et al. (2026) USGS data release, doi:10.5066/P13WIS6X"
+    checked: "USGS release"
+  vectors/landslide_outlines:
+    source: "Source and deposit outlines, USGS data release doi:10.5066/P13WIS6X"
+    license: "US public domain (USGS)"
+    attribution: "Toney et al. (2026) USGS data release, doi:10.5066/P13WIS6X"
+    checked: "USGS release"
+  vectors/glacier/rgi:
+    source: "Randolph Glacier Inventory, layer GLIMS:RGI_Alaska of the GLIMS WFS (RGI version not recorded at staging)"
+    license: CC-BY-4.0
+    attribution: "RGI Consortium, Randolph Glacier Inventory, Alaska region, as served by GLIMS"
+    checked: "RGI user guide (licence); version to confirm from the GLIMS layer metadata"
+  vectors/glacier/glims:
+    source: "GLIMS Glacier Database via WFS"
+    license: "open without restriction (NASA Earth Science data policy)"
+    attribution: "GLIMS Consortium (2005) GLIMS Glacier Database v1, NSIDC, doi:10.7265/N5V98602"
+    checked: "GLIMS/NSIDC data policy, via web search"
+  vectors/glacier/glathida:
+    source: "GlaThiDa glacier thickness points via GLIMS WFS"
+    license: CC-BY-4.0
+    attribution: "Welty et al. (2020) ESSD 12, 3039-3055, doi:10.5194/essd-12-3039-2020"
+    checked: "GlaThiDa repository and ESSD paper"
+  vectors/geology:
+    source: "USGS SIM 3340, Geologic Map of Alaska (Wilson et al., 2015)"
+    license: "US public domain (USGS)"
+    attribution: "Wilson et al. (2015) USGS Scientific Investigations Map 3340, doi:10.3133/sim3340"
+    checked: "USGS publication; US Government work"
+  datacube:
+    source: "Derived in this repository (scripts/build_datacube.py) from the groups above"
+    license: "CC-BY-4.0 for the derivation; inputs keep their own terms above"
+    attribution: "see the input groups"
+    checked: "n/a"

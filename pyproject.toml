@@ -59,6 +59,7 @@ check = "python scripts/check_store.py"
 test = "pytest -q"
 test-online = "pytest -q -m online"
 lint = "ruff check src scripts tests analysis"
+release-metadata = "python scripts/hf_metadata.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/peters_dome"]
