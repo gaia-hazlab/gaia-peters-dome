@@ -4,13 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Peters Dome 3D Atlas (prototype)</title>
-<meta name="description" content="3D view of the 2023 Peters Dome ice-rock avalanche, Denali: terrain, Sentinel-2, elevation change, the published SHALTOP flow, force-time function and seismic envelopes, from the gaia-peters-dome container." />
+<meta name="description" content="3D view of the 2023 Peters Dome ice-rock avalanche, Denali: the seismic and infrasound network around it, then the terrain, imagery, published SHALTOP flow and force-time function, from the gaia-peters-dome container." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
   /* Same visual language as the lab's other 3D atlases (Cascadia, Mount Rainier). */
-  :root { color-scheme: dark; --s0:#121211; --s1:#1a1a19; --s2:#232321; --hair:rgba(255,255,255,0.08); --hair2:rgba(255,255,255,0.16);
-    --t1:#ecebe6; --t2:#a8a69d; --t3:#6f6d66; --accent:#e8a33d; --up:#e8a33d; --north:#66ccf2; --east:#b48cf2; }
+  :root { color-scheme: dark; --s0:#121211; --s1:#1a1a19; --hair:rgba(255,255,255,0.08); --hair2:rgba(255,255,255,0.16);
+    --t1:#ecebe6; --t2:#a8a69d; --t3:#6f6d66; --accent:#e8a33d; --up:#e8a33d; --north:#66ccf2; --east:#b48cf2;
+    --seis:#66ccf2; --infra:#3fc98f; --ev:#e2475f; }
   * { box-sizing:border-box; }
   html, body { margin:0; height:100%; background:var(--s0); color:var(--t1); font:13px "IBM Plex Sans", system-ui, sans-serif; overflow:hidden; -webkit-font-smoothing:antialiased; }
   canvas#scene { position:fixed; inset:0; width:100%; height:100%; display:block; }
@@ -27,31 +28,46 @@
   .stats b { font-size:15px; font-weight:500; }
   .stats span { color:var(--t3); font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; }
   .refs { margin-top:10px; padding-top:8px; border-top:1px solid var(--hair); font-size:11.5px; color:var(--t2); line-height:1.6; }
+  /* mode switch: network (sensors) first, then the event (physics, simulation) */
+  .modes.panel { top:16px; left:50%; transform:translateX(-50%); padding:4px; display:flex; gap:4px; }
+  .modes button { background:transparent; color:var(--t2); border:0; border-radius:4px; padding:7px 14px; font:500 12.5px "IBM Plex Sans"; cursor:pointer; }
+  .modes button small { display:block; color:var(--t3); font-size:10px; font-weight:400; }
+  .modes button.on { background:var(--t1); color:var(--s0); }
+  .modes button.on small { color:#55534d; }
+  .modes .arrow { color:var(--t3); align-self:center; }
   .controls.panel { top:16px; right:16px; padding:12px; width:268px; display:flex; flex-direction:column; gap:10px; }
   .seg { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
   .seg button, .btn { background:transparent; color:var(--t2); border:1px solid var(--hair2); border-radius:4px; padding:5px 6px; font:12px "IBM Plex Sans"; cursor:pointer; text-align:left; }
   .seg button small { display:block; color:var(--t3); font-size:10px; }
   .seg button.on { background:var(--t1); color:var(--s0); border-color:var(--t1); }
   .seg button.on small { color:#55534d; }
+  .btn.go { background:var(--accent); color:#121211; border-color:var(--accent); font-weight:600; text-align:center; padding:8px; }
   .row { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--t2); font-size:12px; }
   .row input[type=range] { flex:1; accent-color:var(--accent); }
   label.chk { display:flex; align-items:center; gap:8px; color:var(--t2); font-size:12px; cursor:pointer; }
   label.chk input { accent-color:var(--accent); }
-  .legend { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--t2); }
+  .legend { display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--t2); }
   .legend .bar { height:8px; border-radius:2px; }
   .legend .ends { display:flex; justify-content:space-between; color:var(--t3); }
+  .sym { display:inline-block; width:10px; height:10px; margin-right:6px; vertical-align:-1px; }
+  .sym.tri { width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-bottom:10px solid var(--seis); }
+  .sym.dot { border-radius:50%; background:var(--infra); }
+  .sym.ring { border-radius:50%; border:1.5px solid; background:transparent; }
+  .note { color:var(--t3); font-size:11px; line-height:1.4; }
   .timeline.panel { left:16px; right:16px; bottom:16px; padding:10px 14px 12px; display:grid; grid-template-columns:150px 1fr 1fr; gap:14px; align-items:stretch; }
   .tctl { display:flex; flex-direction:column; gap:8px; justify-content:center; }
   .tctl .now { font-size:20px; font-weight:500; }
   .tctl .utc { color:var(--t3); font-size:11px; }
   .btn.play { text-align:center; color:var(--t1); }
   .chart { position:relative; min-width:0; }
-  .chart h4 { display:flex; justify-content:space-between; }
+  .chart h4 { display:flex; justify-content:space-between; gap:8px; }
   .chart svg, .chart canvas { width:100%; height:120px; display:block; cursor:ew-resize; }
   .key span { margin-left:10px; font-size:10.5px; text-transform:none; letter-spacing:0; }
   .key i { display:inline-block; width:10px; height:2px; vertical-align:middle; margin-right:4px; }
+  #tip { position:fixed; z-index:20; pointer-events:none; background:rgba(18,18,17,0.95); border:1px solid var(--hair2); border-radius:4px; padding:5px 8px; font-size:11.5px; display:none; }
   #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; color:var(--t3); z-index:10; background:var(--s0); }
-  @media (max-width:900px) { header.panel { width:auto; right:16px; } .controls.panel { top:auto; bottom:280px; } .timeline.panel { grid-template-columns:1fr; } }
+  [hidden] { display:none !important; }
+  @media (max-width:900px) { header.panel { width:auto; right:16px; top:70px; } .controls.panel { display:none; } .timeline.panel { grid-template-columns:1fr; } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -62,23 +78,43 @@
 <body>
 <div id="loading" class="mono">loading the Peters Dome bundle…</div>
 <canvas id="scene"></canvas>
+<div id="tip" class="mono"></div>
 
 <header class="panel">
   <span class="tag">Prototype</span>
   <h1>Peters Dome ice-rock avalanche</h1>
-  <p>Denali National Park and Preserve, Alaska. Terrain, imagery and the published SHALTOP flow on one 3D surface;
-     scrub the timeline to move the flow, the force and the seismic envelopes together.</p>
+  <p id="lede"></p>
   <div class="stats mono" id="stats"></div>
   <div class="refs">
     Toney et al. (2026), <a id="paper" target="_blank" rel="noopener">JGR Earth Surface</a> ·
     USGS release <a id="release" target="_blank" rel="noopener">doi</a><br>
     Data: <a href="https://github.com/gaia-hazlab/gaia-peters-dome" target="_blank" rel="noopener">gaia-peters-dome</a> container ·
-    <a href="../" >event report</a><br>
+    <a href="../">event report</a><br>
     <span class="mono" id="prov" style="color:var(--t3)"></span>
   </div>
 </header>
 
-<aside class="controls panel">
+<nav class="modes panel">
+  <button data-mode="network">1 · Sensor network<small>48 seismic, 31 infrasound, up to 390 km</small></button>
+  <span class="arrow">→</span>
+  <button data-mode="event">2 · The avalanche<small>terrain, flow simulation, force</small></button>
+</nav>
+
+<aside class="controls panel" id="ctl-network">
+  <div class="legend">
+    <h4>Sensors</h4>
+    <div><span class="sym tri"></span>Seismic, 48 (Z, 1-5 Hz)</div>
+    <div><span class="sym dot"></span>Infrasound, 31 (0.5-5 Hz)</div>
+    <div class="note">Each sensor brightens with its own recorded envelope at the time on the timeline. Hover for name and distance; click to highlight its trace.</div>
+    <h4 style="margin-top:6px">Reference wavefronts</h4>
+    <div><span class="sym ring" style="border-color:var(--seis)"></span>3.5 km/s, seismic (illustrative)</div>
+    <div><span class="sym ring" style="border-color:var(--infra)"></span>0.3 km/s, infrasound (illustrative)</div>
+    <div class="note">Rings every 100 km. Relief ×6, AWS Terrain Tiles.</div>
+  </div>
+  <button class="btn go" id="goEvent">Zoom to the avalanche →</button>
+</aside>
+
+<aside class="controls panel" id="ctl-event" hidden>
   <div><h4>Surface</h4><div class="seg" id="drapes"></div></div>
   <div class="legend" id="legend"></div>
   <div><h4>Overlays</h4>
@@ -86,6 +122,7 @@
     <label class="chk"><input type="checkbox" id="flow" checked> SHALTOP flow (run 0520)</label>
   </div>
   <div class="row">Vertical ×<input type="range" id="vex" min="1" max="2.5" step="0.1" value="1.3"><span class="mono" id="vexv">1.3</span></div>
+  <button class="btn" id="goNetwork" style="text-align:center">← Back to the sensor network</button>
 </aside>
 
 <section class="timeline panel">
@@ -94,9 +131,9 @@
     <div class="now mono" id="now">0 s</div>
     <div class="utc mono" id="utc"></div>
     <button class="btn play" id="play">▶ Play</button>
-    <div class="row">Speed<select id="speed" class="btn" style="padding:3px 4px"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select></div>
+    <div class="row">Speed<select id="speed" class="btn" style="padding:3px 4px"><option value="1">1×</option><option value="4">4×</option><option value="10">10×</option><option value="30">30×</option></select></div>
   </div>
-  <div class="chart"><h4>Force-time function <span class="key" id="fkey"></span></h4><svg id="force"></svg></div>
+  <div class="chart" id="chartA"><h4><span id="aTitle"></span><span class="key" id="aKey"></span></h4><svg id="force"></svg><canvas id="infraRS" hidden></canvas></div>
   <div class="chart"><h4>Seismic envelopes, Z, 1-5 Hz <span class="key" id="skey"></span></h4><canvas id="seis"></canvas></div>
 </section>
 
@@ -106,17 +143,21 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const $ = id => document.getElementById(id);
 const D = "data/";
-const T_MIN = -120, T_MAX = 300;                  // timeline window, s after origin
+const RANGE = { network: [-120, 1500], event: [-120, 300] };   // timeline window per view, s after origin
 const meta = await (await fetch(D + "meta.json")).json();
-const [terrainBuf, outlines, force, seisBuf, stations] = await Promise.all([
+const [terrainBuf, outlines, force, seisBuf, infraBuf, stations, regionBuf] = await Promise.all([
   fetch(D + meta.terrain.file).then(r => r.arrayBuffer()), fetch(D + "outlines.json").then(r => r.json()),
   fetch(D + "force.json").then(r => r.json()), fetch(D + meta.seismic.file).then(r => r.arrayBuffer()),
-  fetch(D + "stations.json").then(r => r.json())]);
-const EV = meta.event, G = meta.grid, TR = meta.terrain, SH = meta.shaltop;
+  fetch(D + meta.infrasound.file).then(r => r.arrayBuffer()), fetch(D + "stations.json").then(r => r.json()),
+  fetch(D + meta.region.file).then(r => r.arrayBuffer())]);
+const EV = meta.event, G = meta.grid, TR = meta.terrain, SH = meta.shaltop, RG = meta.region;
+let mode = "network", T_MIN = RANGE.network[0], T_MAX = RANGE.network[1];
 
 // ---- header
 const T0 = Date.parse(EV.origin_time_utc);
 const fmtUTC = s => new Date(T0 + s * 1000).toISOString().slice(11, 19) + " UTC";
+const LEDE = { network: "Denali National Park and Preserve, Alaska. Start with the sensors that recorded it: scrub the timeline and watch the signal reach each station.",
+  event: "Terrain, imagery and the published SHALTOP flow on one 3D surface; scrub the timeline to move the flow, the force and the seismic envelopes together." };
 $("stats").innerHTML = [
   [new Date(T0).toISOString().slice(0, 10), "origin " + EV.origin_time_utc.slice(11, 19) + " UTC"],
   [(Number(EV.volume_m3) / 1e6).toFixed(1) + " × 10⁶ m³", "volume"],
@@ -130,45 +171,41 @@ $("release").href = "https://doi.org/" + meta.provenance.data_release_doi;
 $("release").textContent = meta.provenance.data_release_doi;
 $("prov").textContent = `built ${meta.provenance.built_utc.slice(0, 10)} from ${meta.provenance.built_by} @ ${meta.provenance.repo_commit}`;
 
-// ---- terrain grid (local metres: x east, y up, z = -north; origin at the terrain centre)
+// ---- renderer, camera
+const renderer = new THREE.WebGLRenderer({ canvas: $("scene"), antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x121211);
+const camera = new THREE.PerspectiveCamera(40, 1, 50, 4e6);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.49;
+
+// ================= EVENT VIEW (local terrain, metres; x east, y up, z = -north; origin at the terrain centre)
 const step = 10 * TR.step, NX = TR.nx, NY = TR.ny;
 const h16 = new Uint16Array(terrainBuf);
 const elev = new Float32Array(NX * NY); for (let i = 0; i < elev.length; i++) elev[i] = TR.offset_m + TR.scale_m * h16[i];
 const XC = G.x0 + (NX - 1) * step / 2, YC = G.y0 - (NY - 1) * step / 2;
 let zMid = 0; { let lo = 1e9, hi = -1e9; for (const v of elev) { lo = Math.min(lo, v); hi = Math.max(hi, v); } zMid = (lo + hi) / 2; }
-function elevAt(X, Y) {                            // bilinear on the 40 m terrain grid (UTM metres in, metres out)
+function elevAt(X, Y) {
   const fi = Math.min(Math.max((X - G.x0) / step, 0), NX - 1.001), fj = Math.min(Math.max((G.y0 - Y) / step, 0), NY - 1.001);
   const i = Math.floor(fi), j = Math.floor(fj), a = fi - i, b = fj - j, k = j * NX + i;
   return (1 - a) * (1 - b) * elev[k] + a * (1 - b) * elev[k + 1] + (1 - a) * b * elev[k + NX] + a * b * elev[k + NX + 1];
 }
 const local = (X, Y, z, vex) => new THREE.Vector3(X - XC, (z - zMid) * vex, -(Y - YC));
-
-const renderer = new THREE.WebGLRenderer({ canvas: $("scene"), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x121211);
-const camera = new THREE.PerspectiveCamera(40, 1, 50, 200000);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.49;
-
-const geo = new THREE.PlaneGeometry((NX - 1) * step, (NY - 1) * step, NX - 1, NY - 1);
-geo.rotateX(-Math.PI / 2);
+const eventGroup = new THREE.Group(); scene.add(eventGroup);
+const geo = new THREE.PlaneGeometry((NX - 1) * step, (NY - 1) * step, NX - 1, NY - 1); geo.rotateX(-Math.PI / 2);
 const loader = new THREE.TextureLoader();
 const tex = {}; for (const [k, f] of Object.entries(meta.textures.files)) { const t = loader.load(D + f); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; tex[k] = t; }
 const terrainMat = new THREE.MeshBasicMaterial({ map: tex.s2_before });
-const terrain = new THREE.Mesh(geo, terrainMat); scene.add(terrain);
-
-// ---- outlines (draped 8 m above the surface)
-const olGroup = new THREE.Group(); scene.add(olGroup);
+eventGroup.add(new THREE.Mesh(geo, terrainMat));
+const olGroup = new THREE.Group(); eventGroup.add(olGroup);
 const OL_STYLE = { total: { color: 0xecebe6, dashed: false }, source: { color: 0xe8a33d, dashed: true } };
-// ---- SHALTOP flow: its own 20 m grid, raised by the flow thickness, coloured by it
 const fnx = SH.nx, fny = SH.ny, nF = SH.frames;
 const flowGeo = new THREE.BufferGeometry();
 const fpos = new Float32Array(fnx * fny * 3), fcol = new Float32Array(fnx * fny * 3), fbase = new Float32Array(fnx * fny);
 for (let r = 0; r < fny; r++) for (let c = 0; c < fnx; c++) fbase[r * fnx + c] = elevAt(SH.x0 + c * SH.dx, SH.y0 + r * SH.dy);
 const fidx = []; for (let r = 0; r < fny - 1; r++) for (let c = 0; c < fnx - 1; c++) { const k = r * fnx + c; fidx.push(k, k + 1, k + fnx, k + 1, k + fnx + 1, k + fnx); }
 flowGeo.setIndex(fidx); flowGeo.setAttribute("position", new THREE.BufferAttribute(fpos, 3)); flowGeo.setAttribute("color", new THREE.BufferAttribute(fcol, 3));
-const flow = new THREE.Mesh(flowGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })); scene.add(flow);
-// frames from the sprite: thickness 0..max_m in 0..255
+const flow = new THREE.Mesh(flowGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })); eventGroup.add(flow);
 const sprite = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = D + SH.file; });
 const cv = document.createElement("canvas"); cv.width = sprite.width; cv.height = sprite.height;
 const cx = cv.getContext("2d", { willReadFrequently: true }); cx.drawImage(sprite, 0, 0);
@@ -178,7 +215,6 @@ const frames = []; for (let k = 0; k < nF; k++) { const r = Math.floor(k / SH.co
 const magma = [[0.99,0.99,0.75],[0.99,0.68,0.38],[0.94,0.38,0.37],[0.71,0.21,0.47],[0.42,0.09,0.51]];
 const lut = t => { const x = Math.min(Math.max(t, 0), 1) * 4, i = Math.min(Math.floor(x), 3), f = x - i;
   return magma[i].map((v, j) => v + (magma[i + 1][j] - v) * f); };
-
 let vex = 1.3, frameNow = -1;
 function setFlowFrame(k) {
   const th = frames[k];
@@ -204,14 +240,96 @@ function buildTerrain() {
   if (frameNow >= 0) setFlowFrame(frameNow);
 }
 buildTerrain();
-
-// camera: high oblique from the east-south-east onto the centre of the SHALTOP window (the track)
 const sX = SH.x0 + (fnx - 1) * SH.dx / 2, sY = SH.y0 + (fny - 1) * SH.dy / 2;
-const target = local(sX, sY, elevAt(sX, sY), vex);
-controls.target.copy(target);
-camera.position.copy(target.clone().add(new THREE.Vector3(5600, 6200, 2600)));
+const eventView = () => { const t = local(sX, sY, elevAt(sX, sY), vex); return { target: t, pos: t.clone().add(new THREE.Vector3(5600, 6200, 2600)) }; };
 
-// ---- drapes and legend
+// ================= NETWORK VIEW (same metres; the event's ComCat location at its local position)
+const RVEX = 6, RN = RG.n, RSTEP = RG.step_km * 1e3, RHALF = RG.half_km * 1e3;
+const rz = new Int16Array(regionBuf);
+const evL = local(meta.event_utm[0], meta.event_utm[1], 0, 1);          // event in local x/z
+const R_Y0 = -zMid * vex;                                                // sea level in the scene
+function regElev(xm, ym) {                                               // metres east/north of the event
+  const fi = Math.min(Math.max((xm + RHALF) / RSTEP, 0), RN - 1.001), fj = Math.min(Math.max((RHALF - ym) / RSTEP, 0), RN - 1.001);
+  const i = Math.floor(fi), j = Math.floor(fj), a = fi - i, b = fj - j, k = j * RN + i;
+  return (1 - a) * (1 - b) * rz[k] + a * (1 - b) * rz[k + 1] + (1 - a) * b * rz[k + RN] + a * b * rz[k + RN + 1];
+}
+const reg = (xm, ym, z) => new THREE.Vector3(evL.x + xm, R_Y0 + Math.max(z, 0) * RVEX, evL.z - ym);
+const networkGroup = new THREE.Group(); scene.add(networkGroup);
+{ const rg = new THREE.PlaneGeometry(2 * RHALF, 2 * RHALF, RN - 1, RN - 1); rg.rotateX(-Math.PI / 2);
+  const p = rg.attributes.position; for (let i = 0; i < RN * RN; i++) p.setY(i, R_Y0 + Math.max(rz[i], 0) * RVEX);
+  rg.translate(evL.x, 0, evL.z); rg.computeBoundingSphere();
+  const t = loader.load(D + RG.texture); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  networkGroup.add(new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ map: t }))); }
+const lift = 2500;
+function ringPoints(rm, n = 160) { const pts = [];
+  for (let k = 0; k <= n; k++) { const a = k / n * Math.PI * 2, xm = rm * Math.sin(a), ym = rm * Math.cos(a);
+    pts.push(reg(xm, ym, regElev(xm, ym) + lift / RVEX)); } return pts; }
+for (let r = 100; r <= 400; r += 100) {
+  networkGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPoints(r * 1e3)),
+    new THREE.LineBasicMaterial({ color: 0xecebe6, transparent: true, opacity: 0.35 })));
+  const c = document.createElement("canvas"); c.width = 128; c.height = 40; const g = c.getContext("2d");
+  g.fillStyle = "#ecebe6"; g.font = "26px IBM Plex Mono"; g.fillText(`${r} km`, 6, 30);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false }));
+  sp.scale.set(36000, 11250, 1); sp.position.copy(reg(0, r * 1e3 + 9000, regElev(0, r * 1e3) + 6000)); networkGroup.add(sp);
+}
+const wave = { seis: { v: 3.5, color: 0x66ccf2 }, infra: { v: 0.3, color: 0x3fc98f } };
+for (const w of Object.values(wave)) { w.line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPoints(1)),
+  new THREE.LineBasicMaterial({ color: w.color, transparent: true, opacity: 0.9 })); networkGroup.add(w.line); }
+// event marker
+const evMarker = new THREE.Mesh(new THREE.SphereGeometry(4500, 24, 16), new THREE.MeshBasicMaterial({ color: 0xe2475f }));
+evMarker.position.copy(reg(0, 0, regElev(0, 0) + 3000 / RVEX)); networkGroup.add(evMarker);
+// sensors: instanced, brightness and size follow each sensor's envelope
+const SENS = { seismic: { list: stations.seismic, color: new THREE.Color(0x66ccf2), geo: new THREE.ConeGeometry(4200, 9000, 3) },
+  infrasound: { list: stations.infrasound, color: new THREE.Color(0x3fc98f), geo: new THREE.SphereGeometry(3600, 16, 12) } };
+const dim = new THREE.Color(0x3a3a38), tmpC = new THREE.Color(), tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3();
+for (const s of Object.values(SENS)) {
+  s.mesh = new THREE.InstancedMesh(s.geo, new THREE.MeshBasicMaterial(), s.list.length);
+  s.pos = s.list.map(st => reg(st.x_km * 1e3, st.y_km * 1e3, Math.max(regElev(st.x_km * 1e3, st.y_km * 1e3), st.elev_m) + 6000 / RVEX));
+  networkGroup.add(s.mesh);
+}
+const env = { seismic: { a: new Uint8Array(seisBuf), m: meta.seismic }, infrasound: { a: new Uint8Array(infraBuf), m: meta.infrasound } };
+const envAt = (k, i, t) => { const E = env[k], j = Math.round((t - E.m.t0_rel_s) / E.m.dt_s); return j < 0 || j >= E.m.nt ? 0 : E.a[i * E.m.nt + j] / 255; };
+let selected = null;   // { kind, i }
+function updateSensors(t) {
+  for (const [k, s] of Object.entries(SENS)) for (let i = 0; i < s.list.length; i++) {
+    const a = envAt(k, i, t), sel = selected && selected.kind === k && selected.i === i;
+    const sc = 1 + 1.4 * a + (sel ? 0.6 : 0);
+    tmpS.set(sc, sc, sc); tmpM.compose(s.pos[i], tmpQ, tmpS); s.mesh.setMatrixAt(i, tmpM);
+    tmpC.copy(dim).lerp(s.color, 0.35 + 0.65 * a); if (sel) tmpC.set(0xffffff); s.mesh.setColorAt(i, tmpC);
+  }
+  for (const s of Object.values(SENS)) { s.mesh.instanceMatrix.needsUpdate = true; s.mesh.instanceColor.needsUpdate = true; }
+  for (const w of Object.values(wave)) { const r = w.v * 1e3 * t, on = t > 0 && r < RHALF;
+    w.line.visible = on; if (on) w.line.geometry.setFromPoints(ringPoints(r, 120)); }
+}
+const networkView = () => { const t = evL.clone().setY(R_Y0); t.z += 60000;
+  return { target: t, pos: t.clone().add(new THREE.Vector3(0, 560000, 520000)) }; };
+
+// ---- hover and click on sensors / event marker
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), tip = $("tip");
+function pick(e) {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
+  if (mode !== "network") return null;
+  const hit = ray.intersectObjects([SENS.seismic.mesh, SENS.infrasound.mesh, evMarker], false)[0];
+  if (!hit) return null;
+  if (hit.object === evMarker) return { event: true };
+  const kind = hit.object === SENS.seismic.mesh ? "seismic" : "infrasound"; return { kind, i: hit.instanceId };
+}
+renderer.domElement.addEventListener("pointermove", e => {
+  const p = pick(e); renderer.domElement.style.cursor = p ? "pointer" : "";
+  if (!p) { tip.style.display = "none"; return; }
+  tip.innerHTML = p.event ? "Peters Dome · click to zoom to the avalanche"
+    : (st => `${st.sta} · ${p.kind}<br>${st.dist_km} km, back azimuth ${st.baz_deg}°`)(SENS[p.kind].list[p.i]);
+  tip.style.display = "block"; tip.style.left = e.clientX + 14 + "px"; tip.style.top = e.clientY + 10 + "px";
+});
+let downAt = null;
+renderer.domElement.addEventListener("pointerdown", e => downAt = [e.clientX, e.clientY]);
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4) return;   // a drag, not a click
+  const p = pick(e); if (!p) return;
+  if (p.event) setMode("event"); else { selected = selected && selected.kind === p.kind && selected.i === p.i ? null : p; setTime(tNow); }
+});
+
+// ---- event view controls
 const DRAPES = [
   ["s2_before", "Sentinel-2", meta.textures.s2_dates[0]], ["s2_after", "Sentinel-2", meta.textures.s2_dates[1]],
   ["dh", "Elevation change", "post SETSM − ArcticDEM"], ["thickness", "Max thickness", "SHALTOP run 0520"],
@@ -224,25 +342,22 @@ function setDrape(k) {
   terrainMat.map = tex[k]; terrainMat.needsUpdate = true;
   document.querySelectorAll("#drapes button").forEach(b => b.classList.toggle("on", b.dataset.k === k));
   const L = LEG[k];
-  $("legend").innerHTML = L ? `<div class="bar" style="background:${L[0]}"></div><div class="ends mono"><span>${L[1]}</span><span>${L[2]}</span></div>${L[3] ? `<div style="color:var(--t3)">${L[3]}</div>` : ""}` : "";
+  $("legend").innerHTML = L ? `<div class="bar" style="background:${L[0]}"></div><div class="ends mono"><span>${L[1]}</span><span>${L[2]}</span></div>${L[3] ? `<div class="note">${L[3]}</div>` : ""}` : "";
 }
 $("drapes").onclick = e => { const b = e.target.closest("button"); if (b) setDrape(b.dataset.k); };
 setDrape("s2_before");
 $("ol").onchange = e => olGroup.visible = e.target.checked;
-$("flow").onchange = e => flow.visible = e.target.checked;
-$("vex").oninput = e => { vex = +e.target.value; $("vexv").textContent = vex.toFixed(1);
-  const t = controls.target.clone(); buildTerrain(); const nt = local(sX, sY, elevAt(sX, sY), vex);
-  camera.position.add(nt.clone().sub(t)); controls.target.copy(nt); };
+$("flow").onchange = () => setTime(tNow);
+$("vex").oninput = e => { const before = eventView().target; vex = +e.target.value; $("vexv").textContent = vex.toFixed(1); buildTerrain();
+  const after = eventView().target; camera.position.add(after.clone().sub(before)); controls.target.copy(after); };
 
-// ---- force-time function (SVG)
+// ---- charts: force (SVG), record sections (canvas)
 const FC = { up: "var(--up)", north: "var(--north)", east: "var(--east)" };
-$("fkey").innerHTML = Object.entries(FC).map(([k, c]) => `<span><i style="background:${c}"></i>${k}</span>`).join("");
 const svg = $("force");
 function drawForce() {
-  const W = svg.clientWidth, H = svg.clientHeight; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const W = svg.clientWidth, H = svg.clientHeight; if (!W) return; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const tx = t => (t - T_MIN) / (T_MAX - T_MIN) * W;
-  let fmax = 0; for (const c of Object.values(force.components)) for (const v of c.upper) fmax = Math.max(fmax, Math.abs(v));
-  for (const c of Object.values(force.components)) for (const v of c.lower) fmax = Math.max(fmax, Math.abs(v));
+  let fmax = 0; for (const c of Object.values(force.components)) for (const b of ["upper", "lower"]) for (const v of c[b]) fmax = Math.max(fmax, Math.abs(v));
   const ty = f => H / 2 - f / fmax * (H / 2 - 8);
   let s = `<line x1="0" x2="${W}" y1="${H/2}" y2="${H/2}" stroke="rgba(255,255,255,0.1)"/>`;
   for (let t = -100; t <= T_MAX; t += 100) s += `<line x1="${tx(t)}" x2="${tx(t)}" y1="0" y2="${H}" stroke="rgba(255,255,255,0.06)"/><text x="${tx(t)+3}" y="${H-3}" fill="#6f6d66" font-size="10" font-family="IBM Plex Mono">${t}s</text>`;
@@ -256,51 +371,95 @@ function drawForce() {
   s += `<line id="fcur" y1="0" y2="${H}" stroke="#ecebe6" stroke-width="1"/>`;
   svg.innerHTML = s;
 }
-// ---- seismic record section (canvas): envelopes stacked by distance
-const env = new Uint8Array(seisBuf), SM = meta.seismic, sc = $("seis");
-const dists = stations.seismic.map(s => s.dist_km), dmin = Math.min(...dists), dmax = Math.max(...dists);
-$("skey").innerHTML = `<span>${SM.n} stations, ${dmin.toFixed(0)}-${dmax.toFixed(0)} km</span>`;
-function drawSeis() {
-  const W = sc.clientWidth, H = sc.clientHeight, pr = Math.min(devicePixelRatio, 2);
-  sc.width = W * pr; sc.height = H * pr; const g = sc.getContext("2d"); g.scale(pr, pr);
-  const tx = t => (t - T_MIN) / (T_MAX - T_MIN) * W, ty = d => 6 + (d - dmin) / (dmax - dmin) * (H - 18);
-  g.strokeStyle = "rgba(255,255,255,0.06)";
-  for (let t = -100; t <= T_MAX; t += 100) { g.beginPath(); g.moveTo(tx(t), 0); g.lineTo(tx(t), H); g.stroke(); }
-  for (let i = 0; i < SM.n; i++) {
-    const y0 = ty(dists[i]); g.beginPath(); g.moveTo(0, y0);
-    for (let k = 0; k < SM.nt; k++) { const t = SM.t0_rel_s + k * SM.dt_s; if (t < T_MIN || t > T_MAX) continue;
-      g.lineTo(tx(t), y0 - env[i * SM.nt + k] / 255 * 14); }
-    g.strokeStyle = "rgba(102,204,242,0.75)"; g.lineWidth = 0.8; g.stroke();
+function drawRecord(canvas, kind, rgb) {
+  const E = env[kind], list = SENS[kind].list, d = list.map(s => s.dist_km), dmin = Math.min(...d), dmax = Math.max(...d);
+  const W = canvas.clientWidth, H = canvas.clientHeight, pr = Math.min(devicePixelRatio, 2); if (!W) return;
+  canvas.width = W * pr; canvas.height = H * pr; const g = canvas.getContext("2d"); g.scale(pr, pr);
+  const tx = t => (t - T_MIN) / (T_MAX - T_MIN) * W, ty = v => 8 + (v - dmin) / (dmax - dmin) * (H - 20);
+  const tick = T_MAX - T_MIN > 600 ? 300 : 100;
+  g.strokeStyle = "rgba(255,255,255,0.06)"; g.fillStyle = "#6f6d66"; g.font = "10px IBM Plex Mono";
+  for (let t = Math.ceil(T_MIN / tick) * tick; t <= T_MAX; t += tick) { g.beginPath(); g.moveTo(tx(t), 0); g.lineTo(tx(t), H); g.stroke(); g.fillText(`${t}s`, tx(t) + 3, H - 3); }
+  for (let i = 0; i < list.length; i++) {
+    const sel = selected && selected.kind === kind && selected.i === i, y0 = ty(d[i]);
+    g.beginPath(); g.moveTo(Math.max(tx(E.m.t0_rel_s), 0), y0);
+    const j0 = Math.max(0, Math.floor((T_MIN - E.m.t0_rel_s) / E.m.dt_s)), j1 = Math.min(E.m.nt - 1, Math.ceil((T_MAX - E.m.t0_rel_s) / E.m.dt_s));
+    for (let j = j0; j <= j1; j++) g.lineTo(tx(E.m.t0_rel_s + j * E.m.dt_s), y0 - E.a[i * E.m.nt + j] / 255 * (sel ? 22 : 14));
+    g.strokeStyle = sel ? "#ffffff" : `rgba(${rgb},${selected ? 0.35 : 0.75})`; g.lineWidth = sel ? 1.4 : 0.8; g.stroke();
   }
-  g.fillStyle = "#6f6d66"; g.font = "10px IBM Plex Mono"; g.fillText(`${dmin.toFixed(0)} km`, 4, 12); g.fillText(`${dmax.toFixed(0)} km`, 4, H - 4);
+  g.fillStyle = "#6f6d66"; g.fillText(`${dmin.toFixed(0)} km`, 4, 12); g.fillText(`${dmax.toFixed(0)} km`, 4, H - 14);
+  if (selected && selected.kind === kind) { g.fillStyle = "#ecebe6"; g.fillText(list[selected.i].sta, W - 90, 12); }
+  const fx = tx(tNow); g.strokeStyle = "#ecebe6"; g.lineWidth = 1; g.beginPath(); g.moveTo(fx, 0); g.lineTo(fx, H); g.stroke();
 }
-let tNow = -30;
+$("skey").innerHTML = `<span>${stations.seismic.length} stations, ${stations.seismic[0].dist_km.toFixed(0)}-${stations.seismic.at(-1).dist_km.toFixed(0)} km</span>`;
+
+// ---- time
+let tNow = 0;
 function setTime(t) {
   tNow = Math.min(Math.max(t, T_MIN), T_MAX);
   $("now").textContent = (tNow >= 0 ? "+" : "") + tNow.toFixed(0) + " s"; $("utc").textContent = fmtUTC(tNow);
-  const fx = (tNow - T_MIN) / (T_MAX - T_MIN);
-  const fc = document.getElementById("fcur"); if (fc) { fc.setAttribute("x1", fx * svg.clientWidth); fc.setAttribute("x2", fx * svg.clientWidth); }
-  drawSeis(); const g = sc.getContext("2d"); g.strokeStyle = "#ecebe6"; g.beginPath(); g.moveTo(fx * sc.clientWidth, 0); g.lineTo(fx * sc.clientWidth, sc.clientHeight); g.stroke();
-  const ts = SH.t_rel_s; let k = 0; while (k < nF - 1 && ts[k + 1] <= tNow) k++;
-  flow.visible = $("flow").checked && tNow >= ts[0];
-  if (k !== frameNow) setFlowFrame(k);
+  if (mode === "event") {
+    const fc = $("fcur"), fx = (tNow - T_MIN) / (T_MAX - T_MIN) * svg.clientWidth; if (fc) { fc.setAttribute("x1", fx); fc.setAttribute("x2", fx); }
+    const ts = SH.t_rel_s; let k = 0; while (k < nF - 1 && ts[k + 1] <= tNow) k++;
+    flow.visible = $("flow").checked && tNow >= ts[0];
+    if (k !== frameNow) setFlowFrame(k);
+  } else { drawRecord($("infraRS"), "infrasound", "63,201,143"); updateSensors(tNow); }
+  drawRecord($("seis"), "seismic", "102,204,242");
 }
 const scrub = el => { const go = e => { const r = el.getBoundingClientRect(); setTime(T_MIN + (e.clientX - r.left) / r.width * (T_MAX - T_MIN)); };
   el.addEventListener("pointerdown", e => { go(e); el.setPointerCapture(e.pointerId); el.onpointermove = go; });
   el.addEventListener("pointerup", () => el.onpointermove = null); };
-scrub(svg); scrub(sc);
+scrub(svg); scrub($("seis")); scrub($("infraRS"));
 let playing = false, last = 0;
 $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "❚❚ Pause" : "▶ Play"; if (playing && tNow >= T_MAX) setTime(T_MIN); };
 
+// ---- modes and camera flights
+let flight = null;
+function setMode(m, instant = false) {
+  mode = m; [T_MIN, T_MAX] = RANGE[m];
+  document.querySelectorAll(".modes button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
+  $("ctl-network").hidden = m !== "network"; $("ctl-event").hidden = m !== "event";
+  $("lede").textContent = LEDE[m];
+  $("force").toggleAttribute("hidden", m !== "event"); $("infraRS").hidden = m !== "network";   // SVG elements have no .hidden property
+  $("aTitle").textContent = m === "event" ? "Force-time function" : "Infrasound envelopes, 0.5-5 Hz";
+  $("aKey").innerHTML = m === "event" ? Object.entries(FC).map(([k, c]) => `<span><i style="background:${c}"></i>${k}</span>`).join("")
+    : `<span>${stations.infrasound.length} sensors, ${stations.infrasound[0].dist_km.toFixed(0)}-${stations.infrasound.at(-1).dist_km.toFixed(0)} km</span>`;
+  $("speed").value = m === "event" ? "4" : "30";
+  tip.style.display = "none";
+  const v = m === "event" ? eventView() : networkView();
+  controls.maxDistance = m === "event" ? 60000 : 2.5e6;
+  if (instant) { networkGroup.visible = m === "network"; eventGroup.visible = m === "event";
+    camera.position.copy(v.pos); controls.target.copy(v.target); }
+  else flight = { t0: performance.now(), dur: 1800, p0: camera.position.clone(), q0: controls.target.clone(), p1: v.pos, q1: v.target, swapped: false };
+  drawForce(); setTime(m === "event" && tNow > T_MAX ? 0 : tNow);
+}
+document.querySelectorAll(".modes button").forEach(b => b.onclick = () => b.dataset.mode !== mode && setMode(b.dataset.mode));
+$("goEvent").onclick = () => setMode("event"); $("goNetwork").onclick = () => setMode("network");
+const ease = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+function fly(now) {
+  if (!flight) return; const x = Math.min((now - flight.t0) / flight.dur, 1), e = ease(x);
+  // log-distance interpolation so the zoom feels even across the 3 orders of magnitude between views
+  const d0 = flight.p0.distanceTo(flight.q0), d1 = flight.p1.distanceTo(flight.q1), d = Math.exp(Math.log(d0) + (Math.log(d1) - Math.log(d0)) * e);
+  const q = flight.q0.clone().lerp(flight.q1, e), dir = flight.p0.clone().sub(flight.q0).normalize().lerp(flight.p1.clone().sub(flight.q1).normalize(), e).normalize();
+  controls.target.copy(q); camera.position.copy(q.clone().add(dir.multiplyScalar(d)));
+  if (!flight.swapped && x > 0.7) { networkGroup.visible = mode === "network"; eventGroup.visible = mode === "event"; flight.swapped = true; }
+  if (x >= 1) flight = null;
+}
+
 function resize() { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); drawForce(); setTime(tNow); }
-addEventListener("resize", resize); resize();
+addEventListener("resize", resize);
 const q = new URLSearchParams(location.search);
-if (q.get("t")) setTime(+q.get("t")); if (q.get("drape")) setDrape(q.get("drape"));
+eventGroup.visible = false;
+setMode(q.get("mode") === "event" ? "event" : "network", true);
+if (q.get("drape")) setDrape(q.get("drape"));
+if (q.get("sel")) { const [k, i] = q.get("sel").split(":"); selected = { kind: k, i: +i }; }
+resize(); if (q.get("t")) setTime(+q.get("t"));
 $("loading").remove();
+// read-only handle for scripted checks (headless tests); not used by the page itself
+window.atlas = { camera, controls, SENS, evMarker, networkGroup, eventGroup, get selected() { return selected; }, get mode() { return mode; } };
 renderer.setAnimationLoop(ts => {
   const dt = last ? (ts - last) / 1000 : 0; last = ts;
   if (playing) { setTime(tNow + dt * +$("speed").value); if (tNow >= T_MAX) $("play").click(); }
-  controls.update(); renderer.render(scene, camera);
+  fly(ts); controls.update(); renderer.render(scene, camera);
 });
 </script>
 </body>

@@ -82,7 +82,7 @@ pixi install
 pixi run stage-all       # every dataset -> its group of data/peters_dome.zarr
 pixi run build-cube      # common UTM 5N 10 m grid -> group "datacube" of the same store
 pixi run report          # figures + docs/index.html for GitHub Pages
-pixi run atlas           # 3D atlas data bundle -> docs/atlas/data/ (viewer: docs/atlas/index.html)
+pixi run atlas           # 3D atlas data bundle -> docs/atlas/data/ (viewer: docs/atlas/index.html); fetches 16 Terrain Tiles once
 pixi run test            # offline tests; `pixi run test-online` hits live services
 ```
 

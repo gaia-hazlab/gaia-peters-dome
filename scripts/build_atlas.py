@@ -11,8 +11,12 @@ Nothing is recomputed: every layer is a group of the store, resampled for the we
   outlines.json        landslide source and total footprint, EPSG:32605 metres and lon/lat
   force.json           published force-time function (up, north, east; best, lower, upper)
   seismic.bin          vertical-component envelopes, 1-5 Hz, 1 sample/s, 48 stations, uint8 per-trace normalised
-  stations.json        seismic and infrasound station list (distance, back azimuth)
+  infrasound.bin       pressure envelopes, 0.5-5 Hz, 1 sample/s, 31 sensors, same encoding
+  stations.json        seismic and infrasound station list (distance, back azimuth, x/y km from the event)
   stations.geojson, outlines.geojson   the same in lon/lat, for 2D maps (the GAIA dashboard reads these)
+  region_terrain.bin, region_tex.png   relief of the station network, +-420 km around the event, for the
+                       network view. The only input not in the store: AWS Terrain Tiles (terrarium, zoom 6,
+                       16 tiles, cached in data/cache/terrarium/), resampled to an azimuthal-equidistant grid.
 
 Usage:  pixi run atlas            (python scripts/build_atlas.py --store data/peters_dome.zarr)
 """
@@ -39,6 +43,79 @@ EV = common.event()["event"]
 T0 = np.datetime64(EV["origin_time_utc"].rstrip("Z"), "ns")
 TERRAIN_STEP = 4      # datacube 10 m -> 40 m mesh
 TEX_STEP = 2          # datacube 10 m -> 20 m drapes
+REGION_HALF_KM = 420  # network view: farthest sensor is 390 km away
+REGION_STEP_KM = 2    # mesh; the drape is at half this step
+TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+TERRARIUM_Z = 6       # ~1.1 km per pixel at 63 N
+CACHE = Path(__file__).resolve().parents[1] / "data" / "cache" / "terrarium"
+
+
+def aeqd():
+    """Azimuthal-equidistant projection centred on the event: x east, y north, metres."""
+    from pyproj import Transformer
+    crs = f"+proj=aeqd +lat_0={EV['latitude']} +lon_0={EV['longitude']} +datum=WGS84 +units=m"
+    return Transformer.from_crs("EPSG:4326", crs, always_xy=True), Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+
+
+def regional_relief(step_km):
+    """Elevation (m, bathymetry negative) on a +-REGION_HALF_KM grid around the event, from Terrain Tiles."""
+    import math
+    from urllib.request import urlopen
+    _, inv = aeqd()
+    n = int(2 * REGION_HALF_KM / step_km) + 1
+    ax = np.linspace(-REGION_HALF_KM, REGION_HALF_KM, n) * 1e3
+    X, Y = np.meshgrid(ax, ax[::-1])                       # row 0 = north
+    lon, lat = inv.transform(X, Y)
+    z2 = 2 ** TERRARIUM_Z
+    px = (lon + 180) / 360 * z2 * 256                      # global Web Mercator pixel coordinates
+    py = (1 - np.arcsinh(np.tan(np.radians(lat))) / math.pi) / 2 * z2 * 256
+    tx0, tx1 = int(px.min() // 256), int(px.max() // 256)
+    ty0, ty1 = int(py.min() // 256), int(py.max() // 256)
+    CACHE.mkdir(parents=True, exist_ok=True)
+    mos = np.zeros(((ty1 - ty0 + 1) * 256, (tx1 - tx0 + 1) * 256), np.float32)
+    for ty in range(ty0, ty1 + 1):
+        for tx in range(tx0, tx1 + 1):
+            f = CACHE / f"{TERRARIUM_Z}_{tx}_{ty}.png"
+            if not f.exists():
+                f.write_bytes(urlopen(TERRARIUM.format(z=TERRARIUM_Z, x=tx, y=ty), timeout=60).read())
+            rgb = np.asarray(Image.open(f).convert("RGB"), np.float32)
+            mos[(ty - ty0) * 256:(ty - ty0 + 1) * 256, (tx - tx0) * 256:(tx - tx0 + 1) * 256] = \
+                rgb[..., 0] * 256 + rgb[..., 1] + rgb[..., 2] / 256 - 32768
+    from scipy.ndimage import map_coordinates
+    return map_coordinates(mos, [py - ty0 * 256, px - tx0 * 256], order=1, mode="nearest"), n
+
+
+def relief_texture(z, step_km):
+    """Hillshaded hypsometric tint on land, shaded blue at sea (the network view's drape)."""
+    ls = LightSource(azdeg=315, altdeg=35)
+    shade = ls.hillshade(z, vert_exag=6, dx=step_km * 1e3, dy=step_km * 1e3)
+    land = colormaps["gist_earth"](np.clip(0.38 + z / 6000 * 0.6, 0.38, 0.98))[..., :3]
+    sea = colormaps["Blues"](np.clip(0.35 - z / 6000, 0.35, 0.9))[..., :3]
+    land = 0.55 * land + 0.45 * np.array([0.62, 0.6, 0.55])           # muted, closer to the atlas palette
+    rgb = np.where((z > 0)[..., None], land * (0.45 + 0.6 * shade[..., None]), sea * (0.85 + 0.15 * shade[..., None]))
+    out = np.full(z.shape + (4,), 255, np.uint8)
+    out[..., :3] = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
+    return out
+
+
+def envelopes(x, fs, band, t_rel, noise_window=(-900, -600)):
+    """Band-pass, Hilbert envelope, 1 sample/s.
+
+    Each trace is scaled by max(its 99.9th percentile, 10 x its median pre-event envelope), so background
+    noise sits near 0.1 and arrivals stand out; a trace with no clear arrival stays low.
+    The noise window ends before the ComCat precursor (-475 s).
+    """
+    sos = butter(4, band, btype="band", fs=fs, output="sos")
+    step = round(fs)
+    t1 = t_rel[::step]
+    pre = (t1 >= noise_window[0]) & (t1 < noise_window[1])
+    out = []
+    for tr in x:
+        tr = np.nan_to_num(tr - np.nanmean(tr))
+        e = uniform_filter1d(np.abs(hilbert(sosfiltfilt(sos, tr))), step)[::step]
+        scale = max(np.percentile(e, 99.9), 10 * np.median(e[pre[:e.size]])) or 1
+        out.append(np.clip(e / scale, 0, 1))
+    return np.asarray(out), step
 
 
 def rel_s(t):
@@ -165,29 +242,39 @@ def main():
     # ---- seismic envelopes (Z, 1-5 Hz) and station lists
     seis = common.open_group(store, "stations/seismic")
     fs = 1 / float((seis.time.values[1] - seis.time.values[0]) / np.timedelta64(1, "s"))
-    sos = butter(4, [1, 5], btype="band", fs=fs, output="sos")
-    zc = seis["velocity"].sel(component="Z").values
     order = np.argsort(seis.distance_km.values)
-    step = round(fs)
-    env = []
-    for i in order:
-        tr = np.nan_to_num(zc[i] - np.nanmean(zc[i]))
-        e = np.abs(hilbert(sosfiltfilt(sos, tr)))
-        e = uniform_filter1d(e, step)[::step]
-        env.append(np.clip(e / (np.percentile(e, 99.5) or 1), 0, 1))
-    env = np.asarray(env)
+    env, step = envelopes(seis["velocity"].sel(component="Z").values[order], fs, [1, 5], rel_s(seis.time.values))
     (OUT / "seismic.bin").write_bytes((env * 255).astype(np.uint8).tobytes())
     t_seis = rel_s(seis.time.values[::step])
 
+    infra = common.open_group(store, "stations/infrasound")
+    fsi = 1 / float((infra.time.values[1] - infra.time.values[0]) / np.timedelta64(1, "s"))
+    iorder = np.argsort(infra.distance_km.values)
+    ienv, istep = envelopes(infra["pressure"].values[iorder], fsi, [0.5, 5], rel_s(infra.time.values))
+    (OUT / "infrasound.bin").write_bytes((ienv * 255).astype(np.uint8).tobytes())
+    t_infra = rel_s(infra.time.values[::istep])
+
+    fwd, _ = aeqd()
+
     def stlist(ds, kind):
+        x, y = fwd.transform(ds.lon.values, ds.lat.values)
         return [{"kind": kind, "net": str(ds.network.values[i]), "sta": str(ds.station.values[i]),
                  "lat": round(float(ds.lat.values[i]), 4), "lon": round(float(ds.lon.values[i]), 4),
+                 "elev_m": round(float(ds.elevation.values[i]), 1),
+                 "x_km": round(float(x[i]) / 1e3, 2), "y_km": round(float(y[i]) / 1e3, 2),
                  "dist_km": round(float(ds.distance_km.values[i]), 1),
                  "baz_deg": round(float(ds.back_azimuth_deg.values[i]), 1)} for i in range(ds.sizes["geometry"])]
 
-    infra = common.open_group(store, "stations/infrasound")
     seis_list = [stlist(seis, "seismic")[i] for i in order]
-    stations = {"seismic": seis_list, "infrasound": stlist(infra, "infrasound")}
+    stations = {"seismic": seis_list, "infrasound": [stlist(infra, "infrasound")[i] for i in iorder]}
+
+    # ---- network view: relief around the event (Terrain Tiles; not in the store)
+    zr, nr = regional_relief(REGION_STEP_KM)
+    (OUT / "region_terrain.bin").write_bytes(np.round(zr).astype("<i2").tobytes())
+    zt2, _ = regional_relief(REGION_STEP_KM / 2)
+    png(OUT / "region_tex.png", relief_texture(zt2, REGION_STEP_KM / 2))
+    from pyproj import Transformer
+    ex, ey = Transformer.from_crs("EPSG:4326", "EPSG:32605", always_xy=True).transform(EV["longitude"], EV["latitude"])
     (OUT / "stations.json").write_text(json.dumps(stations))
     (OUT / "stations.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [s["lon"], s["lat"]]},
@@ -203,6 +290,13 @@ def main():
         "shaltop": shaltop,
         "seismic": {"file": "seismic.bin", "n": int(env.shape[0]), "nt": int(env.shape[1]),
                     "t0_rel_s": round(float(t_seis[0]), 3), "dt_s": 1.0, "band_hz": [1, 5], "component": "Z"},
+        "infrasound": {"file": "infrasound.bin", "n": int(ienv.shape[0]), "nt": int(ienv.shape[1]),
+                       "t0_rel_s": round(float(t_infra[0]), 3), "dt_s": 1.0, "band_hz": [0.5, 5]},
+        "event_utm": [round(ex, 1), round(ey, 1)],
+        "region": {"file": "region_terrain.bin", "texture": "region_tex.png", "n": nr, "half_km": REGION_HALF_KM,
+                   "step_km": REGION_STEP_KM, "units": "m, int16, bathymetry negative",
+                   "projection": "azimuthal equidistant centred on the event (ComCat location)",
+                   "source": "AWS Terrain Tiles (terrarium, zoom 6), s3://elevation-tiles-prod"},
         "provenance": {"store": store, "repo_commit": git_commit(), "built_utc": datetime.now(UTC).isoformat(timespec="seconds"),
                        "built_by": "scripts/build_atlas.py", "data_release_doi": "10.5066/P13WIS6X",
                        "paper_doi": "10.1029/2025JF008577"},

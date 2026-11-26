@@ -162,10 +162,35 @@
   ],
   "component": "Z"
  },
+ "infrasound": {
+  "file": "infrasound.bin",
+  "n": 31,
+  "nt": 4200,
+  "t0_rel_s": -1009.074,
+  "dt_s": 1.0,
+  "band_hz": [
+   0.5,
+   5
+  ]
+ },
+ "event_utm": [
+  591195.4,
+  7003085.5
+ ],
+ "region": {
+  "file": "region_terrain.bin",
+  "texture": "region_tex.png",
+  "n": 421,
+  "half_km": 420,
+  "step_km": 2,
+  "units": "m, int16, bathymetry negative",
+  "projection": "azimuthal equidistant centred on the event (ComCat location)",
+  "source": "AWS Terrain Tiles (terrarium, zoom 6), s3://elevation-tiles-prod"
+ },
  "provenance": {
   "store": "/Users/marinedenolle/GitHub/gaia-peters-dome/data/peters_dome.zarr",
-  "repo_commit": "5dc004e",
-  "built_utc": "2026-11-26T17:29:50+00:00",
+  "repo_commit": "242d6e1",
+  "built_utc": "2026-11-26T18:04:53+00:00",
   "built_by": "scripts/build_atlas.py",
   "data_release_doi": "10.5066/P13WIS6X",
   "paper_doi": "10.1029/2025JF008577"
