@@ -54,6 +54,23 @@
   .sym.ring { border-radius:50%; border:1.5px solid; background:transparent; }
   .note { color:var(--t3); font-size:11px; line-height:1.4; }
   .timeline.panel { left:16px; right:16px; bottom:16px; padding:10px 14px 12px; display:grid; grid-template-columns:150px 1fr 1fr; gap:14px; align-items:stretch; }
+  /* open / reduce: the event record folds to a slim bar (time, play, speed, scrub) so the map is free */
+  .fold { position:absolute; top:-27px; right:14px; background:rgba(26,26,25,0.92); color:var(--t2); border:1px solid var(--hair);
+    border-bottom:0; border-radius:6px 6px 0 0; padding:5px 12px; font:500 11.5px "IBM Plex Sans"; cursor:pointer; }
+  .fold:hover, .fold-h:hover { color:var(--t1); }
+  .timeline .mini { display:none; }
+  .timeline.min { grid-template-columns:auto 1fr; padding:8px 14px; align-items:center; }
+  .timeline.min .chart { display:none; }
+  .timeline.min .tctl { flex-direction:row; align-items:center; gap:14px; }
+  .timeline.min .tctl h4 { display:none; }
+  .timeline.min .tctl .now { font-size:16px; min-width:64px; }
+  .timeline.min .mini { display:flex; align-items:center; gap:10px; color:var(--t3); font-size:11px; }
+  .mini .track { flex:1; height:8px; background:var(--hair2); border-radius:4px; position:relative; cursor:ew-resize; }
+  .mini .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:4px; }
+  .fold-h { position:absolute; top:8px; right:8px; width:22px; height:22px; background:transparent; color:var(--t3);
+    border:1px solid var(--hair2); border-radius:4px; font:600 13px/1 "IBM Plex Mono"; cursor:pointer; padding:0; }
+  header.min { padding-bottom:10px; }
+  header.min p, header.min .stats, header.min .refs { display:none; }
   .tctl { display:flex; flex-direction:column; gap:8px; justify-content:center; }
   .tctl .now { font-size:20px; font-weight:500; }
   .tctl .utc { color:var(--t3); font-size:11px; }
@@ -79,7 +96,8 @@
 <canvas id="scene"></canvas>
 <div id="tip" class="mono"></div>
 
-<header class="panel">
+<header class="panel" id="header">
+  <button class="fold-h" id="hdFold" aria-expanded="true" title="Reduce or open this card">−</button>
   <span class="tag">Prototype</span>
   <h1>Peters Dome ice-rock avalanche</h1>
   <p id="lede"></p>
@@ -124,7 +142,8 @@
   <button class="btn" id="goNetwork" style="text-align:center">← Back to the sensor network</button>
 </aside>
 
-<section class="timeline panel">
+<section class="timeline panel" id="timeline">
+  <button class="fold" id="tlFold" aria-expanded="true" aria-controls="timeline" title="Reduce or open the event record (R)">▾ Reduce event record</button>
   <div class="tctl">
     <h4>Time after origin</h4>
     <div class="now mono" id="now">0 s</div>
@@ -134,6 +153,7 @@
   </div>
   <div class="chart" id="chartA"><h4><span id="aTitle"></span><span class="key" id="aKey"></span></h4><svg id="force"></svg><canvas id="infraRS" hidden></canvas></div>
   <div class="chart"><h4>Seismic envelopes, Z, 1-5 Hz <span class="key" id="skey"></span></h4><canvas id="seis"></canvas></div>
+  <div class="mini" id="mini"><span class="mono" id="miniLo"></span><div class="track" id="miniTrack" title="Scrub"><div class="fill" id="miniFill"></div></div><span class="mono" id="miniHi"></span></div>
 </section>
 
 <script type="module">
@@ -416,11 +436,30 @@ function setTime(t) {
     if (k !== frameNow) setFlowFrame(k);
   } else { drawRecord($("infraRS"), "infrasound", "63,201,143"); updateSensors(tNow); }
   drawRecord($("seis"), "seismic", "102,204,242");
+  $("miniFill").style.width = ((tNow - T_MIN) / (T_MAX - T_MIN) * 100).toFixed(2) + "%";
+  $("miniLo").textContent = `${T_MIN} s`; $("miniHi").textContent = `+${T_MAX} s`;
 }
+// ---- open / reduce panels (state kept per viewer; ?record=min|open overrides)
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode: state is not kept */ } } };
+function setRecord(min) {
+  $("timeline").classList.toggle("min", min);
+  $("tlFold").textContent = min ? "▴ Show event record" : "▾ Reduce event record"; $("tlFold").setAttribute("aria-expanded", String(!min));
+  store.set("pd-atlas-record", min ? "min" : "open");
+  if (!min) drawForce(); setTime(tNow);                    // charts were 0 px wide while reduced
+}
+function setHeader(min) {
+  $("header").classList.toggle("min", min); $("hdFold").textContent = min ? "+" : "−"; $("hdFold").setAttribute("aria-expanded", String(!min));
+  store.set("pd-atlas-header", min ? "min" : "open");
+}
+$("tlFold").onclick = () => setRecord(!$("timeline").classList.contains("min"));
+$("hdFold").onclick = () => setHeader(!$("header").classList.contains("min"));
+addEventListener("keydown", e => { if ((e.key === "r" || e.key === "R") && !e.metaKey && !e.ctrlKey && !e.altKey
+  && !["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) setRecord(!$("timeline").classList.contains("min")); });
 const scrub = el => { const go = e => { const r = el.getBoundingClientRect(); setTime(T_MIN + (e.clientX - r.left) / r.width * (T_MAX - T_MIN)); };
   el.addEventListener("pointerdown", e => { go(e); el.setPointerCapture(e.pointerId); el.onpointermove = go; });
   el.addEventListener("pointerup", () => el.onpointermove = null); };
-scrub(svg); scrub($("seis")); scrub($("infraRS"));
+scrub(svg); scrub($("seis")); scrub($("infraRS")); scrub($("miniTrack"));
 let playing = false, last = 0;
 $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "❚❚ Pause" : "▶ Play"; if (playing && tNow >= T_MAX) setTime(T_MIN); };
 
@@ -465,6 +504,8 @@ setMode(q.get("mode") === "event" ? "event" : "network", true);
 if (q.get("drape")) setDrape(q.get("drape"));
 if (q.get("sel")) { const [k, i] = q.get("sel").split(":"); selected = { kind: k, i: +i }; }
 resize(); if (q.get("t")) setTime(+q.get("t"));
+setRecord(q.get("record") ? q.get("record") === "min" : store.get("pd-atlas-record") === "min");
+setHeader(q.get("card") ? q.get("card") === "min" : store.get("pd-atlas-header") === "min");
 $("loading").remove();
 // read-only handle for scripted checks (headless tests); not used by the page itself
 window.atlas = { camera, controls, SENS, evMarker, networkGroup, eventGroup, get selected() { return selected; }, get mode() { return mode; } };

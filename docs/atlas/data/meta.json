@@ -189,8 +189,8 @@
  },
  "provenance": {
   "store": "/Users/marinedenolle/GitHub/gaia-peters-dome/data/peters_dome.zarr",
-  "repo_commit": "242d6e1",
-  "built_utc": "2026-11-26T18:04:53+00:00",
+  "repo_commit": "cf15375",
+  "built_utc": "2026-11-26T19:07:49+00:00",
   "built_by": "scripts/build_atlas.py",
   "data_release_doi": "10.5066/P13WIS6X",
   "paper_doi": "10.1029/2025JF008577"
