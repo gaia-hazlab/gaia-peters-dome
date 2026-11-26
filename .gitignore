@@ -1,5 +1,6 @@
 .pixi/
 data/
+!docs/atlas/data/
 __pycache__/
 *.egg-info/
 .DS_Store
